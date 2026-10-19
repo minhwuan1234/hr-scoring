@@ -6,7 +6,7 @@ HR Intern experience scoring with human-approved reference examples. React + Typ
 
 Select **Add CV** in the Candidates column, choose PDF CVs, then select **Score CVs**. PDF.js extracts text automatically on the device through the shared `src/cv-input.ts` pipeline, ready for reuse by future roles. There is no separate PDF-to-text screen. Scanned PDFs require OCR, which is not included.
 
-The server segments the CV into full sentences; Luna selects sentence IDs and assigns one best-fitting dimension per sentence. Sentences first match existing reference examples. A positive match at or above the configured threshold (default 82%) scores automatically, including new sentences. Weak or missing matches open a review popup: approve or reject, choose a dimension and original rubric band, set the reference cap, and edit the reusable description. Approved references and mappings are reused for later CVs. Final results show the total /100 and nine dimension scores. Scores use `band floor + similarity × (reference cap − band floor)`. There are no sample scores.
+The server segments the CV into full sentences; Luna selects sentence IDs and assigns one best-fitting dimension per sentence. Sentences first match existing reference examples. A positive match at or above the configured threshold (default 70%) scores automatically, including new sentences. Weak or missing matches open a review popup: approve or reject, choose a dimension and original rubric band, set the reference cap, and edit the reusable description. Approved references and mappings are reused for later CVs. Final results show the total /100 and nine dimension scores. Scores use `band floor + similarity × (reference cap − band floor)`. There are no sample scores.
 
 See `docs/hr-intern-scoring.md` for the scoring formula and current assumptions.
 
@@ -42,7 +42,7 @@ npm start
 `railway.json` sets the build, Node start command and health check. Add:
 
 - `OPEN_AI_API_KEY`: required, server only. This exact spelling is used.
-- `OPENAI_MODEL`: optional for local runs, defaults to `gpt-5.6-luna`. The Railway start command explicitly sets this model to override an older deployment value.
+- `OPENAI_MODEL`: optional for local runs, defaults to `gpt-5.6-luna`. The Railway start command explicitly sets this model to override an older deployment value. It also sets `MATCH_THRESHOLD=0.70` for automatic scoring.
 - `OPENAI_EMBEDDING_MODEL`: optional, defaults to `text-embedding-3-small`.
 - `DATABASE_URL`: recommended PostgreSQL connection string for durable human-approved references.
 - Alternatively, mount a Railway volume and set `SCORING_DATA_DIR` to a directory on that volume.

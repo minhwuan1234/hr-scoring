@@ -4,9 +4,11 @@ import { RUBRIC, getBand } from './rubric.mjs';
 import { SCORING_FORMULA, calculate, nearest, validateDecision, validateEvidence } from './engine.mjs';
 import { EMBEDDING_MODEL, embed, extractEvidence } from './openai.mjs';
 
+export const MATCH_THRESHOLD = Number(process.env.MATCH_THRESHOLD || 0.70);
+
 export function createScoringService(store, provider = { embed, extractEvidence }, embeddingModel = EMBEDDING_MODEL) {
   let baseline;
-  const threshold = Number(process.env.MATCH_THRESHOLD || 0.82);
+  const threshold = MATCH_THRESHOLD;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error('MATCH_THRESHOLD must be between 0 and 1.');
 
   async function initialReferences() {

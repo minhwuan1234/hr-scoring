@@ -6,7 +6,7 @@ import { stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStore, workspaceId } from './store.mjs';
-import { createScoringService } from './service.mjs';
+import { createScoringService, MATCH_THRESHOLD } from './service.mjs';
 
 const dist = resolve(fileURLToPath(new URL('../dist',import.meta.url)));
 const store = createStore();
@@ -29,7 +29,7 @@ const server = createServer(async (request,response) => {
   try {
     const path = new URL(request.url,'http://localhost').pathname;
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA});
+    if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)) return json(response,200,await service.get(workspace,path.split('/')[3]));

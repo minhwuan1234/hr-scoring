@@ -158,9 +158,9 @@ test('new sentences auto-score above the threshold and request review below it, 
     await store.update('workspace',state=>{state.references=[ref];});
     const automatic=await service.analyze('workspace','Learned a tool and applied it.');
     assert.equal(automatic.state,'complete'); assert.equal(automatic.total,29.1); assert.equal(automatic.pending.length,0);
-    vector=[0.82,Math.sqrt(1-0.82**2)];
+    vector=[0.70,Math.sqrt(1-0.70**2)];
     assert.equal((await service.analyze('workspace','Built a tracker after learning Sheets.')).state,'complete');
-    for(const similarity of [0.819,0]) {
+    for(const similarity of [0.699,0]) {
       vector=[similarity,Math.sqrt(1-similarity**2)];
       const pending=await service.analyze('workspace','Practiced a new tool in a project.');
       assert.equal(pending.state,'review'); assert.equal(pending.total,0); assert.equal(pending.pending.length,1);
