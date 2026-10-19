@@ -43,6 +43,18 @@ test('keeps readable pages and flags pages requiring OCR', async () => {
   assert.equal(result.text, 'Experience: Recruiting\n\nEducation: University');
 });
 
+test('extracts text when ReadableStream has no async iterator, as on older Safari', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(ReadableStream.prototype, Symbol.asyncIterator);
+  Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { configurable: true, value: undefined });
+  try {
+    const result = await extractPdf(pdfFixture(['Safari-compatible text extraction']));
+    assert.equal(result.text, 'Safari-compatible text extraction');
+  } finally {
+    if (descriptor) Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, descriptor);
+    else Reflect.deleteProperty(ReadableStream.prototype, Symbol.asyncIterator);
+  }
+});
+
 test('does not invent text when the PDF has no text layer', async () => {
   const result = await extractPdf(pdfFixture(['']));
   assert.equal(result.text, '');

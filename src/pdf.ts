@@ -1,5 +1,5 @@
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import type { TextContent, TextItem } from 'pdfjs-dist/types/src/display/api';
 
 export interface Extraction {
   text: string;
@@ -52,8 +52,26 @@ export async function extractPdf(
     const emptyPages: number[] = [];
     for (let number = 1; number <= pdf.numPages; number++) {
       const page = await pdf.getPage(number);
-      const content = await page.getTextContent();
-      const text = pageText(content.items.filter((item): item is TextItem => 'str' in item));
+      let items: TextContent['items'];
+      if (page.isPureXfa) {
+        // XFA text is generated from its form tree rather than the PDF stream.
+        items = (await page.getTextContent()).items;
+      } else {
+        // PDF.js 6 getTextContent uses ReadableStream's async iterator, which
+        // some Safari versions lack. getReader is supported by those browsers.
+        const reader = page.streamTextContent().getReader();
+        items = [];
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            items.push(...(value as TextContent).items);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+      const text = pageText(items.filter((item): item is TextItem => 'str' in item));
       texts.push(text);
       if (!text) emptyPages.push(number);
       page.cleanup();
