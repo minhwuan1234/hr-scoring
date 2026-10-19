@@ -30,3 +30,10 @@
   cursor: pointer;
 }
 .review-dialog select:disabled { opacity: .55; cursor: not-allowed; }
+
+.score-total[data-score-band="low"] { --score-color: #b42318; }
+.score-total[data-score-band="medium"] { --score-color: #a86b00; }
+.score-total[data-score-band="high"] { --score-color: #23834a; }
+.score-total .score-number strong { color: var(--score-color); }
+.score-total .score-ring { background: conic-gradient(var(--score-color) calc(var(--score) * 1%), #eeede8 0); }
+.score-total .score-ring > span { color: var(--score-color); }
