@@ -1,155 +1,135 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
-import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, ShieldCheck, Sparkles, Upload, X } from 'lucide-react';
-import { extractPdf, pdfError } from './pdf';
-import { HR_INTERN_DIMENSIONS, HR_INTERN_POSITION, SAMPLE_TOTAL } from './hr-intern';
+import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, ShieldCheck, Upload, X } from 'lucide-react';
+import { pdfError } from './pdf';
+import { readCv } from './cv-input';
+import { HR_INTERN_DIMENSIONS, HR_INTERN_POSITION } from './hr-intern';
+import { scoringRequest, type ScoreResult, type ReviewDecision } from './scoring-api';
+import ReviewDialog from './ReviewDialog';
 import './scoring.css';
 
-type Stage = 'ready' | 'scoring' | 'complete' | 'error';
-interface Candidate {
-  id: string;
-  name: string;
-  file?: File;
-  stage: Stage;
-  error?: string;
+type Stage = 'ready' | 'scoring' | 'review' | 'complete' | 'error';
+interface Candidate { id: string; name: string; file?: File; stage: Stage; result?: ScoreResult; error?: string }
+const SESSION = 'hr-scoring-jobs-v1';
+function restore(): Candidate[] {
+  try { return JSON.parse(sessionStorage.getItem(SESSION) || '[]').filter((item: Candidate) => typeof item.id === 'string' && typeof item.name === 'string' && item.result?.id).slice(0,50); }
+  catch { return []; }
 }
-const SAMPLE: Candidate = { id: 'sample', name: 'Sample candidate.pdf', stage: 'ready' };
+function message(error: unknown) {
+  if (error instanceof Error && ['PasswordException','InvalidPDFException'].includes(error.name)) return pdfError(error);
+  if (error instanceof Error && error.name === 'TimeoutError') return 'Scoring timed out. Please retry.';
+  return error instanceof Error ? error.message : 'Scoring could not complete. Please retry.';
+}
 
 export default function HrIntern() {
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [errors, setErrors] = useState<string[]>([]);
+  const [candidates,setCandidates] = useState<Candidate[]>(restore);
+  const [selectedId,setSelectedId] = useState<string | null>(() => restore()[0]?.id ?? null);
+  const [busy,setBusy] = useState(false);
+  const [reviewBusy,setReviewBusy] = useState(false);
+  const [reviewId,setReviewId] = useState<string | null>(null);
+  const [reviewError,setReviewError] = useState('');
+  const [dragging,setDragging] = useState(false);
+  const [errors,setErrors] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const running = useRef(false);
   const mounted = useRef(true);
   const dragDepth = useRef(0);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const selected = candidates.find(candidate => candidate.id === selectedId);
-  const pending = candidates.filter(candidate => candidate.stage === 'ready');
-  const completed = candidates.filter(candidate => candidate.stage === 'complete').length;
-  const patch = (id: string, changes: Partial<Candidate>) => {
-    if (mounted.current) setCandidates(current => current.map(candidate => candidate.id === id ? { ...candidate, ...changes } : candidate));
-  };
+  const selected = candidates.find(item => item.id === selectedId);
+  const reviewing = candidates.find(item => item.id === reviewId);
+  const evidence = reviewing?.result?.pending[0];
+  const pending = candidates.filter(item => item.stage === 'ready' && item.file);
+  const completed = candidates.filter(item => item.stage === 'complete').length;
+  const patch = (id: string, changes: Partial<Candidate>) => { if (mounted.current) setCandidates(current => current.map(item => item.id === id ? {...item,...changes} : item)); };
+
+  useEffect(() => {
+    mounted.current = true;
+    for (const item of restore()) {
+      void scoringRequest<ScoreResult>(`/api/jobs/${item.result!.id}`).then(result => patch(item.id,{result,stage:result.state})).catch(error => patch(item.id,{stage:'error',error:message(error)}));
+    }
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    try { sessionStorage.setItem(SESSION,JSON.stringify(candidates.filter(item => item.result).map(({id,name,stage,result}) => ({id,name,stage,result})))); } catch { /* The active page still works if browser storage is full. */ }
+  }, [candidates]);
 
   function addFiles(files: File[]) {
     if (running.current) return;
-    const messages: string[] = [];
-    const additions: Candidate[] = [];
+    const issues: string[] = [], additions: Candidate[] = [];
     for (const file of files) {
-      if (!/\.pdf$/i.test(file.name)) { messages.push(`${file.name}: please choose a PDF.`); continue; }
-      if (!file.size || file.size > 20 * 1024 * 1024) { messages.push(`${file.name}: choose a non-empty PDF up to 20 MB.`); continue; }
-      if (candidates.length + additions.length >= 50) { messages.push('Choose up to 50 files per batch.'); break; }
-      additions.push({ id: crypto.randomUUID(), name: file.name, file, stage: 'ready' });
+      if (!/\.pdf$/i.test(file.name)) { issues.push(`${file.name}: please choose a PDF.`); continue; }
+      if (!file.size || file.size > 20 * 1024 * 1024) { issues.push(`${file.name}: choose a non-empty PDF up to 20 MB.`); continue; }
+      if (candidates.length + additions.length >= 50) { issues.push('Choose up to 50 files per batch.'); break; }
+      additions.push({id:crypto.randomUUID(),name:file.name,file,stage:'ready'});
     }
-    setErrors(messages);
-    if (additions.length) {
-      setCandidates(current => [...current, ...additions]);
-      setSelectedId(current => current ?? additions[0].id);
-    }
+    setErrors(issues);
+    if (additions.length) { setCandidates(current => [...current,...additions]); setSelectedId(current => current ?? additions[0].id); }
   }
 
-  async function preview(queue: Candidate[]) {
+  async function score(queue: Candidate[]) {
     if (running.current || !queue.length) return;
-    running.current = true;
-    setBusy(true);
+    running.current = true; setBusy(true);
     try {
       for (const candidate of queue) {
         if (!mounted.current) break;
-        setSelectedId(candidate.id);
-        patch(candidate.id, { stage: 'scoring', error: undefined });
+        setSelectedId(candidate.id); patch(candidate.id,{stage:'scoring',error:undefined});
         try {
-          // PDF validation is real; scores are explicitly illustrative until a model is connected.
-          if (candidate.file) {
-            const result = await extractPdf(new Uint8Array(await candidate.file.arrayBuffer()), undefined, `${import.meta.env.BASE_URL}pdfjs/`);
-            if (!result.text) {
-              patch(candidate.id, { stage: 'error', error: 'This PDF has no readable text. Please use a text-based PDF.' });
-              continue;
-            }
-          }
-          await new Promise(resolve => setTimeout(resolve, 2200));
-          patch(candidate.id, { stage: 'complete' });
-        } catch (error) {
-          patch(candidate.id, { stage: 'error', error: pdfError(error) });
-        }
+          const text = await readCv(candidate.file!);
+          const result = await scoringRequest<ScoreResult>('/api/score',{text});
+          patch(candidate.id,{result,stage:result.state});
+          if (result.state === 'review') { setReviewError(''); setReviewId(candidate.id); break; }
+        } catch (error) { patch(candidate.id,{stage:'error',error:message(error)}); }
       }
-    } finally {
-      running.current = false;
-      if (mounted.current) setBusy(false);
-    }
+    } finally { running.current = false; if (mounted.current) setBusy(false); }
   }
 
-  function previewSample() {
-    if (running.current) return;
-    setCandidates(current => current.some(candidate => candidate.id === SAMPLE.id) ? current.map(candidate => candidate.id === SAMPLE.id ? { ...candidate, stage: 'ready', error: undefined } : candidate) : [...current, SAMPLE]);
-    setSelectedId(SAMPLE.id);
-    void preview([SAMPLE]);
+  async function decide(decision: ReviewDecision) {
+    if (!reviewing?.result || reviewBusy) return;
+    setReviewBusy(true); setReviewError('');
+    try {
+      const result = await scoringRequest<ScoreResult>(`/api/jobs/${reviewing.result.id}/review`,{decisions:[decision]});
+      patch(reviewing.id,{result,stage:result.state});
+      if (result.state === 'complete') setReviewId(null);
+    } catch (error) { setReviewError(message(error)); }
+    finally { setReviewBusy(false); }
   }
 
   function downloadResult() {
-    if (!selected || selected.stage !== 'complete') return;
-    const report = [
-      'HR Intern — Experience scoring',
-      'UI PREVIEW: Illustrative scores, not an evaluation of this candidate.',
-      `File: ${selected.name}`,
-      `Total: ${SAMPLE_TOTAL}/100`,
-      '',
-      ...HR_INTERN_DIMENSIONS.map(dimension => `${dimension.title}: ${dimension.sample}/${dimension.max}`),
-    ].join('\n');
-    const url = URL.createObjectURL(new Blob([report], { type: 'text/plain;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = selected.name.replace(/\.pdf$/i, '') + '-score-preview.txt';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (!selected?.result || selected.stage !== 'complete') return;
+    const report = [`Position: ${HR_INTERN_POSITION}`,`File: ${selected.name}`,`Total: ${selected.result.total}/100`,'',...HR_INTERN_DIMENSIONS.map(d => `${d.title}: ${selected.result!.dimensions.find(item => item.id === d.id)?.score ?? 0}/${d.max}`)].join('\n');
+    const url = URL.createObjectURL(new Blob([report],{type:'text/plain;charset=utf-8'}));
+    const link = document.createElement('a'); link.href = url; link.download = selected.name.replace(/\.pdf$/i,'')+'-scores.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
   }
-
-  function drop(event: DragEvent) {
-    event.preventDefault();
-    dragDepth.current = 0;
-    setDragging(false);
-    addFiles(Array.from(event.dataTransfer.files));
-  }
+  function drop(event: DragEvent) { event.preventDefault(); dragDepth.current = 0; setDragging(false); addFiles(Array.from(event.dataTransfer.files)); }
+  const total = selected?.result?.total ?? 0;
 
   return <>
-    <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>HR Intern</strong></div><span className="scoring-preview-tag">UI preview</span></header>
+    <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>HR Intern</strong></div></header>
     <div className="content scoring-content">
-      <div className="page-heading"><div><div className="eyebrow"><span>01</span>CANDIDATE SCREENING</div><h1>HR Intern<span className="title-dot">.</span></h1><p>Review experience. Discover potential.</p></div><button className="button secondary sample-button" disabled={busy} onClick={previewSample}><Sparkles size={14} />Preview sample</button></div>
-
+      <div className="page-heading"><div><div className="eyebrow"><span>01</span>CANDIDATE SCREENING</div><h1>HR Intern<span className="title-dot">.</span></h1><p>Review experience. Discover potential.</p></div></div>
       <div className="position-strip"><div><span className="role-icon"><FileText size={17} /></span><div><span className="position-eyebrow">POSITION</span><strong>{HR_INTERN_POSITION}</strong></div></div><span className="experience-tag">Experience <span>100 pts</span></span></div>
-
       <section className="upload-section" aria-label="Upload candidate CVs">
         <div className={`dropzone ${dragging ? 'dragging' : ''} ${busy ? 'disabled' : ''}`} onDragEnter={event => { event.preventDefault(); if (!busy) { dragDepth.current++; setDragging(true); } }} onDragOver={event => event.preventDefault()} onDragLeave={event => { event.preventDefault(); if (--dragDepth.current <= 0) setDragging(false); }} onDrop={drop}>
           <span className="upload-icon"><Upload size={22} strokeWidth={1.6} /></span><div className="upload-copy"><h2>Drop your candidate CVs here</h2><p>PDF only · Up to 20 MB each · 50 files per batch</p></div><button className="button primary browse-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={16} />Choose CVs</button>
           <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         </div>
-        <div className="upload-footnote"><span><ShieldCheck size={14} />Your files stay on your device.</span></div>
+        <div className="upload-footnote"><span><ShieldCheck size={14} />PDFs are read on your device. CV text is sent to OpenAI when you score.</span></div>
       </section>
-
-      {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error, index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
-
+      {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
       <section className="workspace-panel scoring-workspace" aria-label="HR Intern experience scoring">
-        <div className="queue-panel">
-          <div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2>{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div>
-          <div className="queue-list scoring-queue">
-            {!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add a CV to preview the<br />HR Intern scoring experience.</p></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
-              <button className="file-select" aria-pressed={selectedId === candidate.id} onClick={() => setSelectedId(candidate.id)}><span className="file-symbol"><FileText size={18} /><small>PDF</small></span><span className="file-detail"><strong title={candidate.name}>{candidate.name}</strong><span>HR Intern</span><span className={`status ${candidate.stage === 'complete' ? 'done' : candidate.stage === 'error' ? 'error' : ''}`}>{candidate.stage === 'scoring' ? <LoaderCircle size={11} className="spin" /> : candidate.stage === 'complete' ? <Check size={11} /> : candidate.stage === 'error' ? <CircleAlert size={11} /> : <span className="status-dot" />}{candidate.stage === 'ready' ? 'Ready' : candidate.stage === 'scoring' ? 'Scoring…' : candidate.stage === 'complete' ? 'Preview ready' : 'Unable to read'}</span></span></button><button className="icon-button remove-file" disabled={busy} aria-label={`Remove ${candidate.name}`} onClick={() => { const remaining = candidates.filter(item => item.id !== candidate.id); setCandidates(remaining); if (selectedId === candidate.id) setSelectedId(remaining[0]?.id ?? null); }}><X size={14} /></button>
-            </div>)}
-          </div>
-          <div className="queue-footer"><button className="button primary convert-button" disabled={busy || !pending.length} onClick={() => void preview(pending)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ScanText size={16} />}{busy ? 'Scoring…' : 'Preview scoring'}{!busy && <ArrowRight size={16} />}</button><p>{busy ? 'Please keep this tab open' : completed ? `${completed} preview${completed === 1 ? '' : 's'} ready` : 'Select CVs to get started'}</p></div>
+        <div className="queue-panel"><div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2>{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div>
+          <div className="queue-list scoring-queue">{!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add CVs to review their<br />HR Intern experience.</p></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
+            <button className="file-select" aria-pressed={selectedId === candidate.id} onClick={() => setSelectedId(candidate.id)}><span className="file-symbol"><FileText size={18} /><small>PDF</small></span><span className="file-detail"><strong title={candidate.name}>{candidate.name}</strong><span>HR Intern</span><span className={`status ${candidate.stage === 'complete' ? 'done' : candidate.stage === 'error' ? 'error' : ''}`}>{candidate.stage === 'scoring' ? <LoaderCircle size={11} className="spin" /> : candidate.stage === 'complete' ? <Check size={11} /> : candidate.stage === 'error' ? <CircleAlert size={11} /> : <span className="status-dot" />}{({ready:'Ready',scoring:'Scoring…',review:'Review needed',complete:'Scored',error:'Needs attention'})[candidate.stage]}</span></span></button><button className="icon-button remove-file" disabled={busy} aria-label={`Remove ${candidate.name}`} onClick={() => { const remaining = candidates.filter(item => item.id !== candidate.id); setCandidates(remaining); if (selectedId === candidate.id) setSelectedId(remaining[0]?.id ?? null); }}><X size={14} /></button>
+          </div>)}</div>
+          <div className="queue-footer"><button className="button primary convert-button" disabled={busy || !pending.length} onClick={() => void score(pending)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ScanText size={16} />}{busy ? 'Scoring…' : 'Score CVs'}{!busy && <ArrowRight size={16} />}</button><p>{busy ? 'Please keep this tab open' : completed ? `${completed} CV${completed === 1 ? '' : 's'} scored` : 'Select CVs to get started'}</p></div>
         </div>
-
-        <div className="output-panel scoring-output" aria-busy={selected?.stage === 'scoring'}>
-          <div className="panel-heading"><div className="output-title"><h2>Experience score</h2>{selected?.stage === 'complete' && <span className="scoring-preview-tag">Sample result</span>}</div>{selected?.stage === 'complete' && <button className="button secondary download-button" onClick={downloadResult}><ArrowDownToLine size={14} />Download</button>}</div>
-          {selected?.stage === 'complete' ? <div className="score-result">
-            <div className="score-total"><div><span className="score-label">TOTAL SCORE</span><div className="score-number"><strong>{SAMPLE_TOTAL}</strong><span>/ 100</span></div><p>Experience · HR Intern</p></div><div className="score-ring" style={{ '--score': SAMPLE_TOTAL } as CSSProperties}><span><Check size={25} strokeWidth={1.7} /></span></div></div>
-            <div className="dimension-heading"><h3>Score breakdown</h3><span>Score / Max</span></div>
-            <div className="dimension-list">{HR_INTERN_DIMENSIONS.map((dimension, index) => <div className="dimension-row" key={dimension.id}><span className="dimension-index">{String(index + 1).padStart(2, '0')}</span><div className="dimension-name"><span>{dimension.title}</span><div className="dimension-track"><span style={{ width: `${dimension.sample / dimension.max * 100}%` }} /></div></div><span className="dimension-points"><strong>{dimension.sample}</strong><span>/ {dimension.max}</span></span></div>)}</div>
-            <p className="illustrative-note">Illustrative scores for UI preview. This is not an assessment of the uploaded CV.</p>
-          </div> : selected?.stage === 'scoring' ? <div className="scoring-loading" role="status"><div className="loading-orbit"><ScanText size={27} strokeWidth={1.5} /><span /></div><h3>Scoring experience<span className="loading-dots">…</span></h3><p>Preparing your scoring preview.</p><div className="indeterminate-track"><span /></div></div> : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to read this CV</h3><p>{selected.error}</p><button className="button secondary" disabled={busy} onClick={() => patch(selected.id, { stage: 'ready', error: undefined })}>Try again</button></div> : <div className="output-empty score-empty"><div className="score-preview-paper"><span /><span /><span /><span /><div><Sparkles size={17} /></div></div><h3>{selected ? 'Ready when you are' : 'A clearer view of potential'}</h3><p>{selected ? 'Start the preview to see the total experience score and a breakdown for each part.' : 'Add a CV or preview a sample to explore the HR Intern experience score.'}</p>{!selected && <button className="text-button empty-sample" onClick={previewSample}>Preview a sample result<ArrowRight size={13} /></button>}</div>}
+        <div className="output-panel scoring-output" aria-busy={selected?.stage === 'scoring'}><div className="panel-heading"><h2>Experience score</h2>{selected?.stage === 'complete' && <button className="button secondary download-button" onClick={downloadResult}><ArrowDownToLine size={14} />Download</button>}</div>
+          {selected?.stage === 'complete' ? <div className="score-result"><div className="score-total"><div><span className="score-label">TOTAL SCORE</span><div className="score-number"><strong>{total}</strong><span>/ 100</span></div><p>Experience · HR Intern</p></div><div className="score-ring" style={{'--score':total} as CSSProperties}><span><Check size={25} strokeWidth={1.7} /></span></div></div><div className="dimension-heading"><h3>Score breakdown</h3><span>Score / Max</span></div><div className="dimension-list">{HR_INTERN_DIMENSIONS.map((d,index) => { const points = selected.result?.dimensions.find(item => item.id === d.id)?.score ?? 0; return <div className="dimension-row" key={d.id}><span className="dimension-index">{String(index+1).padStart(2,'0')}</span><div className="dimension-name"><span>{d.title}</span><div className="dimension-track"><span style={{width:`${points/d.max*100}%`}} /></div></div><span className="dimension-points"><strong>{points}</strong><span>/ {d.max}</span></span></div>; })}</div></div>
+          : selected?.stage === 'scoring' ? <div className="scoring-loading" role="status"><div className="loading-orbit"><ScanText size={27} strokeWidth={1.5} /><span /></div><h3>Scoring experience…</h3><p>Please wait while we review this CV.</p><div className="indeterminate-track"><span /></div></div>
+          : selected?.stage === 'review' ? <div className="output-empty"><div className="preview-illustration"><FileText size={28} /></div><h3>A quick review is needed</h3><p>Confirm {selected.result?.pending.length} new evidence item{selected.result?.pending.length === 1 ? '' : 's'} to finish scoring.</p><button className="button primary" onClick={() => {setReviewError('');setReviewId(selected.id);}}>Review evidence</button></div>
+          : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to score this CV</h3><p>{selected.error}</p>{selected.file && <button className="button secondary" disabled={busy} onClick={() => patch(selected.id,{stage:'ready',error:undefined})}>Try again</button>}</div>
+          : <div className="output-empty score-empty"><div className="score-preview-paper"><span /><span /><span /><span /></div><h3>{selected ? 'Ready when you are' : 'A clearer view of potential'}</h3><p>{selected ? 'Score this CV to see the total experience score and a breakdown for each part.' : 'Add candidate CVs to get started.'}</p></div>}
         </div>
-      </section>
-      <footer className="page-footer"><span>HR SCORING</span><p>HR Intern · Experience</p></footer>
+      </section><footer className="page-footer"><span>HR SCORING</span><p>HR Intern · Experience</p></footer>
     </div>
+    {evidence && <ReviewDialog key={evidence.id} evidence={evidence} remaining={reviewing!.result!.pending.length} busy={reviewBusy} error={reviewError} onDecision={decision => void decide(decision)} onClose={() => {setReviewId(null);setReviewError('');}} />}
   </>;
 }
