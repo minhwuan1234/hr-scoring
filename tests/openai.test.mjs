@@ -10,7 +10,8 @@ test('Luna Responses request uses server key, structured evidence and no respons
    assert.equal(url,'https://api.openai.com/v1/responses');
    assert.equal(options.headers.Authorization,'Bearer test-only-placeholder');
    const body = JSON.parse(options.body);
-   assert.equal(body.model,LUNA_MODEL); assert.equal(body.store,false);
+   assert.equal(body.model,LUNA_MODEL);
+   if (!process.env.OPENAI_MODEL) assert.equal(body.model,'gpt-5.6-luna'); assert.equal(body.store,false);
    assert.equal(body.text.format.type,'json_schema'); assert.equal(body.text.format.strict,true);
    assert.ok(body.input[0].content[0].text.includes('synthetic CV text'));
    const fields = body.text.format.schema.properties.evidence.items.properties;

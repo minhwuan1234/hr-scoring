@@ -2,6 +2,7 @@ import { RUBRIC, getBand } from './rubric.mjs';
 
 import { cvSentences, sentenceKey } from './sentences.mjs';
 export { normalize } from './sentences.mjs';
+export const SCORING_FORMULA = 'band-interpolation-v1';
 
 export function cosine(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || !a.length || a.length !== b.length) throw new Error('Incompatible embeddings.');
@@ -45,9 +46,12 @@ export function calculate(job, references, embeddingModel) {
     used.add(key);
     const match = nearest(evidence, references, embeddingModel);
     if (!match) continue;
-    // Requested rule: percentage of this reference's human-approved cap.
-    // Band underflow is retained as an explicit unresolved rubric policy.
-    details.push({ key, dimension: evidence.dimension, referenceId: match.ref.id, similarity: match.similarity, cap: match.ref.cap, score: match.similarity * match.ref.cap });
+    // Stage 1 selects the closest reference. Stage 2 reuses its cosine
+    // similarity to interpolate between that band's floor and this cap.
+    const floor = getBand(match.ref.dimension,match.ref.band)[0];
+    const cap = match.ref.cap;
+    if (!Number.isFinite(cap) || cap < floor || cap > getBand(match.ref.dimension,match.ref.band)[1]) throw new Error('Invalid reference cap.');
+    details.push({ key, dimension: evidence.dimension, referenceId: match.ref.id, similarity: match.similarity, floor, cap, score: floor + match.similarity * (cap - floor) });
   }
   const dimensions = RUBRIC.map(dimension => {
     const matches = details.filter(detail => detail.dimension === dimension.id);

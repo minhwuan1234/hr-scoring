@@ -1,7 +1,7 @@
 import { SCORING_UNIT } from './sentences.mjs';
 import { randomUUID } from 'node:crypto';
 import { RUBRIC, getBand } from './rubric.mjs';
-import { calculate, nearest, validateDecision, validateEvidence } from './engine.mjs';
+import { SCORING_FORMULA, calculate, nearest, validateDecision, validateEvidence } from './engine.mjs';
 import { EMBEDDING_MODEL, embed, extractEvidence } from './openai.mjs';
 
 export function createScoringService(store, provider = { embed, extractEvidence }, embeddingModel = EMBEDDING_MODEL) {
@@ -35,17 +35,19 @@ export function createScoringService(store, provider = { embed, extractEvidence 
       while (jobs.length >= 20) delete state.jobs[jobs.shift().id];
       // Embedding spaces cannot be mixed when a configured model changes.
       if (!state.references.some(ref => ref.embeddingModel === embeddingModel)) state.references.push(...structuredClone(seeds));
-      const job = { id:randomUUID(), scoringUnit:SCORING_UNIT, createdAt:now, embeddingModel, referenceVersion:state.version, evidence: output.map((item,index) => {
+      const job = { id:randomUUID(), scoringUnit:SCORING_UNIT, scoringFormula:SCORING_FORMULA, createdAt:now, embeddingModel, referenceVersion:state.version, evidence: output.map((item,index) => {
         const mapping = state.mappings[item.key];
         const evidence = { ...item, id:randomUUID(), vector:vectors[index], status:'pending' };
         if (mapping?.action === 'reject') return { ...evidence, status:'rejected' };
         if (mapping?.dimension) {
           evidence.dimension = mapping.dimension;
-          if (state.references.some(ref => ref.id === mapping.referenceId && ref.embeddingModel === embeddingModel)) evidence.referenceId = mapping.referenceId;
         }
         const match = nearest(evidence,state.references,embeddingModel);
         if (match) evidence.band = match.ref.band;
-        if (mapping?.action === 'approve' && match && match.similarity >= threshold) evidence.status = 'approved';
+        if (match && match.similarity > 0 && match.similarity >= threshold) {
+          evidence.status = 'approved';
+          evidence.referenceId = match.ref.id;
+        }
         return evidence;
       }) };
       job.result = calculate(job,state.references,embeddingModel);
@@ -62,6 +64,7 @@ export function createScoringService(store, provider = { embed, extractEvidence 
       const job = state.jobs[jobId];
       if (!job || Date.now() - job.createdAt > 24 * 3600000) throw Object.assign(new Error('This review has expired. Please score the CV again.'), { status:404 });
       if (job.scoringUnit !== SCORING_UNIT) throw Object.assign(new Error('Scoring now uses full sentences. Please upload and score this CV again.'), { status:409 });
+      if (job.scoringFormula !== SCORING_FORMULA) throw Object.assign(new Error('Scoring rules changed. Please upload and score this CV again.'), { status:409 });
       if (job.embeddingModel !== embeddingModel) throw Object.assign(new Error('The embedding configuration changed. Please score the CV again.'), { status:409 });
       if (decisions.some(decision => !job.evidence.some(item => item.id === decision.id && item.status === 'pending'))) throw Object.assign(new Error('This review changed. Reload the result and try again.'), { status:409 });
       const approved = decisions.filter(decision => decision.action === 'approve');
@@ -90,6 +93,7 @@ export function createScoringService(store, provider = { embed, extractEvidence 
       const job = state.jobs[id];
       if (!job || Date.now() - job.createdAt > 24 * 3600000) throw Object.assign(new Error('This review has expired. Please score the CV again.'), { status:404 });
       if (job.scoringUnit !== SCORING_UNIT) throw Object.assign(new Error('Scoring now uses full sentences. Please upload and score this CV again.'), { status:409 });
+      if (job.scoringFormula !== SCORING_FORMULA) throw Object.assign(new Error('Scoring rules changed. Please upload and score this CV again.'), { status:409 });
       return publicJob(job);
     });
   }

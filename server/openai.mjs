@@ -1,6 +1,6 @@
 import { cvSentences } from './sentences.mjs';
 import { DIMENSION_IDS, GENERAL_RULES, RUBRIC } from './rubric.mjs';
-export const LUNA_MODEL = process.env.OPENAI_MODEL || 'gpt-6-luna';
+export const LUNA_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
 export const EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
 
 export class ApiError extends Error {
