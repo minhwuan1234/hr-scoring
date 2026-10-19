@@ -9,14 +9,15 @@ import { cvSentences, sentenceKey } from '../server/sentences.mjs';
 import { createScoringService } from '../server/service.mjs';
 
 const model = 'test-embedding';
-const ref = { id:'ref', dimension:'learning-drive', cap:30, band:2, vector:[1,0], embeddingModel:model };
-const ev = { id:'e',key:'self taught',keyword:'self taught',quote:'self taught Excel',statement:'Applied self-directed learning',dimension:'learning-drive',band:2,vector:[0.8,0.6],status:'approved' };
+const fullAssessment = async pairs => pairs.map(pair=>({id:pair.id,fulfillment:1,reason:'All ceiling requirements demonstrated.'}));
+const ref = { id:'ref', dimension:'learning-drive', cap:30, band:2, statement:'Repeated independent learning applied to concrete outputs.', vector:[1,0], embeddingModel:model };
+const ev = { id:'e',key:'self taught',keyword:'self taught',quote:'self taught Excel',statement:'Applied self-directed learning',dimension:'learning-drive',band:2,vector:[0.8,0.6],status:'approved',assessment:{referenceId:'ref',fulfillment:0.4,reason:'Partial ceiling fulfillment.'} };
 
-test('interpolates 80 percent into the selected 21–30 band, rounded once per dimension', () => {
+test('retrieval match 80 percent and independent fulfillment 40 percent produce 24.6, not 28.2', () => {
   assert.equal(cosine([0.8,0.6],[1,0]),0.8);
   const result=calculate({id:'job',evidence:[ev],referenceVersion:1},[ref],model);
-  assert.equal(result.total,28.2);
-  assert.equal(result.dimensions[0].score,28.2);
+  assert.equal(result.total,24.6);
+  assert.equal(result.dimensions[0].score,24.6);
   assert.equal(result.state,'complete');
 });
 
@@ -27,7 +28,7 @@ test('unapproved or rejected evidence never earns points', () => {
 
 test('the same sentence cannot earn points in two houses even with different fragment keys', () => {
   const result=calculate({id:'job',evidence:[ev,{...ev,key:'different fragment',dimension:'tools'}]},[ref,{...ref,id:'tool',dimension:'tools',cap:3}],model);
-  assert.equal(result.total,28.2); assert.equal(result.dimensions.find(d=>d.id==='tools').score,0);
+  assert.equal(result.total,24.6); assert.equal(result.dimensions.find(d=>d.id==='tools').score,0);
 });
 
 test('a full sentence stays intact and cannot become multiple fragment reviews', () => {
@@ -62,12 +63,12 @@ test('rejects invented sentence IDs and keyword-only provider output', () => {
 
 test('honors a human-selected reference cap even when a seeded reference is identical', () => {
   const references=[ref,{...ref,id:'human',cap:18,band:1}];
-  const result=calculate({id:'job',evidence:[{...ev,vector:[1,0],referenceId:'human'}]},references,model);
+  const result=calculate({id:'job',evidence:[{...ev,vector:[1,0],referenceId:'human',assessment:{referenceId:'human',fulfillment:1}}]},references,model);
   assert.equal(result.total,18);
 });
 
 test('does not inflate a dimension by adding many overlapping evidence matches', () => {
-  const result=calculate({id:'job',evidence:[ev,{...ev,key:'other sentence',quote:'Learned Sheets and applied it in a project.',vector:[1,0]}]},[ref],model);
+  const result=calculate({id:'job',evidence:[ev,{...ev,key:'other sentence',quote:'Learned Sheets and applied it in a project.',vector:[1,0],assessment:{referenceId:'ref',fulfillment:1}}]},[ref],model);
   assert.equal(result.total,30);
 });
 
@@ -86,7 +87,7 @@ test('human decisions persist and can be reused without sending raw CV text to s
   const directory=await mkdtemp(join(tmpdir(),'hr-scoring-test-'));
   const store=createStore({databaseUrl:null,directory});
   const workspace=workspaceId('a'.repeat(64));
-  const provider={
+  const provider={assessCeilings:fullAssessment,
     embed:async texts=>texts.map(text=>text === 'Applied independent learning to a tracker.' ? [1,0] : [0,1]),
     extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied independent learning to a tracker.',reason:'Learned and applied.',dimension:'learning-drive',band:1}]}),
   };
@@ -117,7 +118,7 @@ test('human decisions persist and can be reused without sending raw CV text to s
 test('rejection completes review with zero points and is remembered', async () => {
   const directory=await mkdtemp(join(tmpdir(),'hr-reject-test-'));
   const store=createStore({databaseUrl:null,directory});
-  const provider={embed:async texts=>texts.map(text=>text === 'Exposure to Excel.' ? [1,0] : [0,1]),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Exposure to Excel.',reason:'Tool exposure.',dimension:'tools',band:1}]})};
+  const provider={assessCeilings:fullAssessment,embed:async texts=>texts.map(text=>text === 'Exposure to Excel.' ? [1,0] : [0,1]),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Exposure to Excel.',reason:'Tool exposure.',dimension:'tools',band:1}]})};
   try {
     const service=createScoringService(store,provider,model);
     const job=await service.analyze('workspace','Used Excel for a school task.');
@@ -133,17 +134,17 @@ test('workspace capability tokens must be cryptographically sized',()=>{
 });
 
 test('band interpolation respects floors, human caps and zero-width bands', () => {
-  const score = (vector,reference) => calculate({id:'job',evidence:[{...ev,vector,referenceId:reference.id,dimension:reference.dimension}]},[reference],model).total;
-  assert.equal(score([0,1],ref),21);
-  assert.equal(score([1,0],ref),30);
-  assert.equal(score([0.8,0.6],{...ref,cap:18,band:1}),16.4);
-  assert.equal(score([0.8,0.6],{...ref,dimension:'process',cap:4,band:2}),4);
-  assert.equal(score([0.8,0.6],{...ref,dimension:'tools',cap:0,band:0}),0);
+  const score = (fulfillment,reference) => calculate({id:'job',evidence:[{...ev,referenceId:reference.id,dimension:reference.dimension,assessment:{referenceId:reference.id,fulfillment}}]},[reference],model).total;
+  assert.equal(score(0,ref),21);
+  assert.equal(score(1,ref),30);
+  assert.equal(score(0.8,{...ref,cap:18,band:1}),16.4);
+  assert.equal(score(0.8,{...ref,dimension:'process',cap:4,band:2}),4);
+  assert.equal(score(0.8,{...ref,dimension:'tools',cap:0,band:0}),0);
 });
 
 test('selects the most similar reference, not the highest cap or model-suggested band', () => {
   const refs=[ref,{...ref,id:'closest',vector:[0.8,0.6],band:1,cap:18}];
-  const result=calculate({id:'job',evidence:[ev]},refs,model);
+  const result=calculate({id:'job',evidence:[{...ev,assessment:{referenceId:'closest',fulfillment:1}}]},refs,model);
   assert.equal(result.details[0].referenceId,'closest');
   assert.equal(result.total,18);
 });
@@ -152,18 +153,20 @@ test('new sentences auto-score above the threshold and request review below it, 
   const directory=await mkdtemp(join(tmpdir(),'hr-auto-match-'));
   const store=createStore({databaseUrl:null,directory});
   let vector=[0.9,Math.sqrt(0.19)];
-  const provider={embed:async texts=>texts.map(()=>vector),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied learning.',reason:'Evidence.',dimension:'learning-drive',band:0}]})};
+  let assessmentCalls=0;
+  const provider={assessCeilings:async pairs=>{assessmentCalls++;return pairs.map(pair=>({id:pair.id,fulfillment:0.4,reason:'Partial execution evidence.'}));},embed:async texts=>texts.map(()=>vector),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied learning.',reason:'Evidence.',dimension:'learning-drive',band:0}]})};
   try {
     const service=createScoringService(store,provider,model);
     await store.update('workspace',state=>{state.references=[ref];});
     const automatic=await service.analyze('workspace','Learned a tool and applied it.');
-    assert.equal(automatic.state,'complete'); assert.equal(automatic.total,29.1); assert.equal(automatic.pending.length,0);
+    assert.equal(automatic.state,'complete'); assert.equal(automatic.total,24.6); assert.equal(automatic.pending.length,0);
     vector=[0.70,Math.sqrt(1-0.70**2)];
     assert.equal((await service.analyze('workspace','Built a tracker after learning Sheets.')).state,'complete');
     for(const similarity of [0.699,0]) {
       vector=[similarity,Math.sqrt(1-similarity**2)];
       const pending=await service.analyze('workspace','Practiced a new tool in a project.');
       assert.equal(pending.state,'review'); assert.equal(pending.total,0); assert.equal(pending.pending.length,1);
+      assert.equal(assessmentCalls,2);
     }
   } finally {await rm(directory,{recursive:true,force:true});}
 });
@@ -172,7 +175,7 @@ test('a known sentence searches all references in its approved house instead of 
   const directory=await mkdtemp(join(tmpdir(),'hr-nearest-cap-'));
   const store=createStore({databaseUrl:null,directory});
   const text='Learned Sheets and applied it in a project.';
-  const provider={embed:async texts=>texts.map(()=>[1,0]),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied learning.',reason:'Evidence.',dimension:'tools',band:0}]})};
+  const provider={assessCeilings:fullAssessment,embed:async texts=>texts.map(()=>[1,0]),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied learning.',reason:'Evidence.',dimension:'tools',band:0}]})};
   try {
     await store.update('workspace',state=>{
       state.references=[ref,{...ref,id:'old-human',cap:18,band:1,vector:[0,1]}];
@@ -182,5 +185,52 @@ test('a known sentence searches all references in its approved house instead of 
     assert.equal(result.state,'complete'); assert.equal(result.total,30);
     const stored=await store.update('workspace',state=>state.jobs[result.id]);
     assert.equal(stored.evidence[0].referenceId,'ref');
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('retrieval similarity cannot substitute for a missing or stale ceiling assessment',()=>{
+  for(const assessment of [undefined,{referenceId:'another',fulfillment:0.4},{referenceId:'ref',fulfillment:1.1}]) {
+    assert.throws(()=>calculate({id:'job',evidence:[{...ev,vector:[1,0],assessment}]},[ref],model),/separate ceiling assessment/);
+  }
+  for(const vector of [[1,0],[0.8,0.6],[0.7,Math.sqrt(0.51)]]) {
+    assert.equal(calculate({id:'job',evidence:[{...ev,vector}]},[ref],model).total,24.6);
+  }
+});
+
+test('human approval gets a separate ceiling assessment and saves the independent result',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'hr-human-ceiling-'));
+  const store=createStore({databaseUrl:null,directory});
+  const quote='I learned Sheets and applied it to a tracker.';
+  let calls=0;
+  const provider={
+    embed:async texts=>texts.map(text=>text === 'Applied learning.' || text === 'Built a tracker independently.' ? [1,0] : [0,1]),
+    extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied learning.',reason:'Evidence.',dimension:'learning-drive',band:1}]}),
+    assessCeilings:async pairs=>{calls++;assert.equal(pairs[0].quote,quote);assert.equal(pairs[0].reference.statement,'Built a tracker independently.');assert.equal('similarity' in pairs[0],false);return pairs.map(pair=>({id:pair.id,fulfillment:0.25,reason:'Limited demonstrated scope.'}));},
+  };
+  try {
+    const service=createScoringService(store,provider,model);
+    const pending=await service.analyze('workspace',quote);
+    assert.equal(calls,0);
+    const result=await service.review('workspace',pending.id,[{...pending.pending[0],action:'approve',dimension:'learning-drive',band:1,cap:18,statement:'Built a tracker independently.'}]);
+    assert.equal(result.total,12); assert.equal(calls,1);
+    const saved=await store.update('workspace',state=>state.jobs[result.id]);
+    assert.equal(saved.evidence[0].assessment.fulfillment,0.25);
+    assert.equal(saved.result.details[0].similarity,1);
+    assert.equal((await service.get('workspace',result.id)).total,12);assert.equal(calls,1);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('invalid separate assessments fail atomically rather than falling back to retrieval similarity',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'hr-invalid-ceiling-'));
+  const store=createStore({databaseUrl:null,directory});
+  const provider={embed:async texts=>texts.map(()=>[1,0]),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied learning.',reason:'Evidence.',dimension:'learning-drive',band:2}]})};
+  try {
+    await store.update('workspace',state=>{state.references=[ref];});
+    const cases=[()=>[],pairs=>[{id:'invented',fulfillment:0.4,reason:'x'}],pairs=>[{id:pairs[0].id,fulfillment:1.5,reason:'x'}],pairs=>[{id:pairs[0].id,fulfillment:NaN,reason:'x'}],pairs=>[{id:pairs[0].id,fulfillment:0.4,reason:''}]];
+    for(const invalid of cases) {
+      const service=createScoringService(store,{...provider,assessCeilings:async pairs=>invalid(pairs)},model);
+      await assert.rejects(()=>service.analyze('workspace','Learned and applied a new tool.'),error=>error.status===502);
+      assert.equal(await store.update('workspace',state=>Object.keys(state.jobs).length),0);
+    }
   } finally {await rm(directory,{recursive:true,force:true});}
 });

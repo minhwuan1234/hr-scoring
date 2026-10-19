@@ -2,7 +2,7 @@ import { RUBRIC, getBand } from './rubric.mjs';
 
 import { cvSentences, sentenceKey } from './sentences.mjs';
 export { normalize } from './sentences.mjs';
-export const SCORING_FORMULA = 'band-interpolation-v1';
+export const SCORING_FORMULA = 'independent-ceiling-v2';
 
 export function cosine(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || !a.length || a.length !== b.length) throw new Error('Incompatible embeddings.');
@@ -46,12 +46,14 @@ export function calculate(job, references, embeddingModel) {
     used.add(key);
     const match = nearest(evidence, references, embeddingModel);
     if (!match) continue;
-    // Stage 1 selects the closest reference. Stage 2 reuses its cosine
-    // similarity to interpolate between that band's floor and this cap.
+    // Retrieval similarity selects the reference only. Fulfillment comes from
+    // a separate assessment of the original sentence against that ceiling.
+    const assessment = evidence.assessment;
+    if (!assessment || assessment.referenceId !== match.ref.id || !Number.isFinite(assessment.fulfillment) || assessment.fulfillment < 0 || assessment.fulfillment > 1) throw Object.assign(new Error('A separate ceiling assessment is required. Please score the CV again.'), {status:502});
     const floor = getBand(match.ref.dimension,match.ref.band)[0];
     const cap = match.ref.cap;
     if (!Number.isFinite(cap) || cap < floor || cap > getBand(match.ref.dimension,match.ref.band)[1]) throw new Error('Invalid reference cap.');
-    details.push({ key, dimension: evidence.dimension, referenceId: match.ref.id, similarity: match.similarity, floor, cap, score: floor + match.similarity * (cap - floor) });
+    details.push({ key, dimension: evidence.dimension, referenceId: match.ref.id, similarity: match.similarity, floor, cap, fulfillment:assessment.fulfillment, score: floor + assessment.fulfillment * (cap - floor) });
   }
   const dimensions = RUBRIC.map(dimension => {
     const matches = details.filter(detail => detail.dimension === dimension.id);
