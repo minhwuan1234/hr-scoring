@@ -4,12 +4,12 @@ import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText
 import { pdfError } from './pdf';
 import { readCv } from './cv-input';
 import {positionKey,type PositionTemplate} from './positions';
-import { scoringRequest, type ScoreResult, type ReviewDecision } from './scoring-api';
+import { candidateCvRequest, scoringRequest, type ScoreResult, type ReviewDecision } from './scoring-api';
 import ReviewDialog from './ReviewDialog';
 import './scoring.css';
 
 type Stage = 'ready' | 'scoring' | 'review' | 'complete' | 'error';
-interface Candidate { id: string; name: string; file?: File; stage: Stage; result?: ScoreResult; error?: string }
+interface Candidate { id: string; name: string; file?: File; stage: Stage; result?: ScoreResult; error?: string; cvUploadFailed?:boolean }
 const SESSION = 'hr-scoring-jobs-v2';
 function restore(key:string,position:PositionTemplate): Candidate[] {
   try { return JSON.parse(sessionStorage.getItem(key) || (position.id==='hr-intern' && position.version===1 ? sessionStorage.getItem(SESSION) : null) || '[]').filter((item: Candidate) => typeof item.id === 'string' && typeof item.name === 'string' && item.result?.id).slice(0,50); }
@@ -80,6 +80,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
           const text = await readCv(candidate.file!);
           const result = await scoringRequest<ScoreResult>('/api/score',{text,fileName:candidate.name,positionId:position.id,positionVersion:position.version});
           patch(candidate.id,{result,stage:result.state});
+          try{await candidateCvRequest(result.id,position.id,position.version,candidate.file);patch(candidate.id,{cvUploadFailed:false});}catch{patch(candidate.id,{cvUploadFailed:true});setErrors(current=>[...current,'Score saved, but the original CV could not be saved. Retry the CV upload below.']);}
           notifyCandidatesChanged();
           if (result.state === 'review') { setReviewError(''); setReviewId(candidate.id); break; }
         } catch (error) { patch(candidate.id,{stage:'error',error:message(error)}); }
@@ -99,6 +100,10 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     finally { setReviewBusy(false); }
   }
 
+  async function retryCvUploads(){
+    if(busy)return;setBusy(true);
+    try{for(const c of candidates.filter(c=>c.cvUploadFailed&&c.file&&c.result)){try{await candidateCvRequest(c.result!.id,position.id,position.version,c.file);patch(c.id,{cvUploadFailed:false});notifyCandidatesChanged();}catch(error){setErrors([message(error)]);}}}finally{setBusy(false);}
+  }
   function downloadResult() {
     if (!selected?.result || selected.stage !== 'complete') return;
     const report = [`Position: ${position.name}`,`File: ${selected.name}`,`Total: ${selected.result.total}/100`,'',...position.rubric.map(d => `${d.title}: ${selected.result!.dimensions.find(item => item.id === d.id)?.score ?? 0}/${d.max}`)].join('\n');
@@ -115,6 +120,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
       <div hidden={view!=='screening'}>
       <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
       {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
+      {candidates.some(c=>c.cvUploadFailed&&c.file)&&<button className="text-button" disabled={busy} onClick={()=>void retryCvUploads()}>Retry CV upload</button>}
       <section className="workspace-panel scoring-workspace" aria-label={`${position.name} candidate scoring`}>
         <div className="queue-panel"><div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2><div className="candidate-actions">{!!candidates.length && <button className="text-button add-cv-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={14} />Add CV</button>}{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div></div>
           <div className="queue-list scoring-queue">{!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add CVs to review candidates<br />for {position.name}.</p><button className="text-button add-cv-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={15} />Add CV</button></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>

@@ -34,6 +34,11 @@ const server = createServer(async (request,response) => {
     if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
+      if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
+        const {scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));
+        const {bytes,fileName}=await store.cvFiles.get(scope,path.split('/')[3]);
+        response.writeHead(200,{'Content-Type':'application/pdf','Content-Length':bytes.length,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});return response.end(bytes);
+      }
       if(request.method==='GET' && path==='/api/candidates')return json(response,200,await store.candidates(workspace));
       if(request.method==='GET' && path==='/api/positions')return json(response,200,await positions.list(workspace));
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)){const {service,scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));return json(response,200,await service.get(scope,path.split('/')[3]));}
@@ -46,6 +51,12 @@ const server = createServer(async (request,response) => {
       let limit = rateLimits.get(ip);
       if (!limit || now > limit.until) { limit = {count:0,until:now+600000}; rateLimits.set(ip,limit); }
       if (++limit.count > 200 || active >= 3) return json(response,429,{error:'Too many scoring requests. Please retry in a few minutes.'});
+      if(/^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
+        if(request.headers['content-type']?.split(';')[0]!=='application/pdf')return json(response,415,{error:'Choose a PDF file.'});
+        const {scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));
+        const chunks=[];let length=0;for await(const chunk of request){length+=chunk.length;if(length>20*1024*1024)return json(response,413,{error:'Choose a PDF up to 20 MB.'});chunks.push(chunk);}
+        await store.cvFiles.save(scope,path.split('/')[3],Buffer.concat(chunks));return json(response,200,{cvAvailable:true});
+      }
       if(path==='/api/positions')return json(response,201,await positions.create(workspace,await body(request)));
       if(/^\/api\/positions\/[^/]+$/.test(path))return json(response,200,await positions.update(workspace,decodeURIComponent(path.split('/')[3]),await body(request)));
       if (!process.env.OPEN_AI_API_KEY) return json(response,503,{error:'Scoring is not configured yet. Add OPEN_AI_API_KEY on Railway.'});

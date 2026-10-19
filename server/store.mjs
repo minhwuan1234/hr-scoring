@@ -1,3 +1,4 @@
+import {createCvFiles} from './cv-files.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {archiveCandidates,fileCandidates,candidateRow} from './candidates.mjs';
 import { createHash } from 'node:crypto';
@@ -65,5 +66,6 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     const {rows}=await pool.query(`SELECT c.* FROM hr_scoring_candidates c WHERE c.workspace_id=$1 OR c.workspace_id IN (SELECT scoring_workspace_id FROM hr_scoring_position_scopes WHERE owner_workspace_id=$1) ORDER BY c.created_at_ms DESC,c.job_id`,[owner]);
     return rows.map(candidateRow);
   }
-  return { update, initialize, candidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  const cvFiles=createCvFiles({pool,directory,initialize,update});
+  return { update, initialize, candidates, cvFiles, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

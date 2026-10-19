@@ -36,3 +36,9 @@ export async function scoringRequest<T>(path: string, payload?: unknown, timeout
   if (!response.ok) throw new Error(data.error || 'Scoring could not complete. Please retry.');
   return data as T;
 }
+
+export async function candidateCvRequest(id:string,positionId:string,positionVersion:number,file?:File,signal?:AbortSignal):Promise<Response>{
+ const response=await fetch(`/api/jobs/${encodeURIComponent(id)}/cv?positionId=${encodeURIComponent(positionId)}&positionVersion=${positionVersion}`,{method:file?'POST':'GET',headers:{'X-Workspace-Token':workspaceToken(),...(file?{'Content-Type':'application/pdf'}:{})},...(file?{body:file}:{}),signal:signal || AbortSignal.timeout(120000)});
+ if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error || 'Unable to access the original CV. Please retry.');}
+ return response;
+}

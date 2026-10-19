@@ -1,9 +1,10 @@
 # PostgreSQL storage model
 
-Railway uses the `candidate-profiles-v4` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
+Railway uses the `candidate-cv-files-v5` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
 
 | Table | Records |
 | --- | --- |
+| `hr_scoring_candidate_files` | Original PDF bytes, linked to durable candidate history and isolated by workspace. |
 | `hr_scoring_candidates` | Durable CV metadata and original score summaries, independent of expiring jobs. |
 | `hr_scoring_positions` | Immutable template definitions, owner workspace, position ID and version. |
 | `hr_scoring_position_scopes` | Maps each owner/position/version to its isolated scoring workspace. |
@@ -46,6 +47,14 @@ Each position version derives an isolated scoring workspace from the owner capab
 Startup archives every retained legacy job during the backed-up migration. Reusable references, jobs, older template versions and the one-time cleanup marker are preserved. Compatibility imports cannot delete candidate snapshots when older replicas omit history. History remains available across template versions and review-job pruning. Previously deleted jobs or original filenames that were never stored cannot be reconstructed.
 
 The frontend polls this endpoint every 3 seconds while visible, also refreshing after score/review mutations. Status labels are derived from completed totals; pending review remains provisional. This is automatic polling, not a WebSocket stream, and does not trigger model calls.
+
+## Original CV access
+
+After scoring, the browser uploads the corresponding original PDF through `POST /api/jobs/:id/cv?positionId=…&positionVersion=…`. The server accepts PDF data up to 20 MB, checks its signature and requires an existing candidate in that owned role/version scope. PostgreSQL stores bytes in `hr_scoring_candidate_files.pdf` (`BYTEA`); candidate snapshots expose only `cvAvailable`, never the bytes. Upload retries preserve the first saved original.
+
+`GET` on the same endpoint requires the browser workspace capability and checks role/version ownership. Responses use `application/pdf`, `nosniff`, and `Cache-Control: no-store`. The UI fetches the authenticated PDF into a temporary browser object URL, shows it in a preview popup and revokes the URL when closed. No capability token appears in the PDF URL. Both history and original PDF survive review-job expiry. Local development stores private PDF files under the configured data directory.
+
+The dashboard shows separate Phone, Email and CV columns. Candidate filename subtitles and visible template version labels are removed. Missing historical PDF originals display a dash; they cannot be reconstructed from stored scores.
 
 ## Constraints
 
