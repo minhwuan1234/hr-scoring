@@ -29,7 +29,7 @@ const server = createServer(async (request,response) => {
   try {
     const path = new URL(request.url,'http://localhost').pathname;
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)) return json(response,200,await service.get(workspace,path.split('/')[3]));

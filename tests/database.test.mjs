@@ -8,6 +8,7 @@ function database({ applied=false, failArchive=false }={}) {
   const client={
     async query(sql,args) {
       calls.push({sql,args});
+      if(sql.startsWith('SELECT schema_version')) return {rows:[{schema_version:'relational-v1'}]};
       if(sql.startsWith('SELECT dataset_version')) return {rows:applied ? [{dataset_version:DATASET_VERSION}] : []};
       if(sql.startsWith('INSERT INTO hr_scoring_test_data_archive')) {
         if(failArchive) throw new Error('archive unavailable');

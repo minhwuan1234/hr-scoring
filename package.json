@@ -21,6 +21,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10",
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",

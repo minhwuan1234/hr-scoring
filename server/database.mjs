@@ -1,3 +1,5 @@
+import { initializeRelationalSchema } from './relational-store.mjs';
+
 // One-time clean start requested after prototype testing. Keep the previous
 // dataset outside the active table so this reset can be reversed if needed.
 export const DATASET_VERSION = 'clean-start-2026-10-19';
@@ -17,6 +19,7 @@ export async function initializePostgres(pool) {
       await client.query('DELETE FROM hr_scoring_workspace_state');
       await client.query('INSERT INTO hr_scoring_data_migrations (dataset_version, archived_workspaces) VALUES ($1, $2)', [DATASET_VERSION, archived.rowCount]);
     }
+    await initializeRelationalSchema(client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

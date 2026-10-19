@@ -58,3 +58,7 @@ Jobs now use `independent-ceiling-v2`; jobs made with earlier formulas require r
 ## Independent ceiling assessment
 
 The model assesses demonstrated actions, scope, independence, responsibility, outputs and progression relevant to the selected ceiling. It respects negation and missing evidence; the rewritten reference is a standard, not proof. The server validates exact assessment IDs, completeness, uniqueness, finite fulfillment in [0,1], and a brief evidence-based reason. Missing, failed or invalid assessment output is an error, never a fallback to retrieval similarity. Auto-approved sentences are assessed in a batch; pending and rejected sentences are not assessed. A human approval triggers an assessment of the newly approved ceiling. Assessment snapshots are stored per evidence/reference, and retrieval does not rerun them.
+
+## Relational persistence
+
+`relational-v1` stores each ceiling example in `hr_scoring_references` and each sentence/assessment in `hr_scoring_evidence`. Equal-cap contexts remain distinct. Evidence records `match_similarity` separately from `ceiling_fulfillment`, and references are constrained to the evidence's workspace, dimension, band and embedding model. The migration preserves reference IDs, prior results and pending reviews without rescoring; details are in `docs/database.md`.

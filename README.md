@@ -47,7 +47,7 @@ npm start
 - `DATABASE_URL`: required on Railway. Reference the existing Postgres service with `${{Postgres.DATABASE_URL}}`. The app initializes its PostgreSQL tables before accepting traffic.
 - `SCORING_DATA_DIR`: optional file storage for local development only.
 
-Railway startup fails if PostgreSQL is not configured; it cannot silently fall back to temporary files. Local runs without `DATABASE_URL` use `.data/`. `PORT` is supplied by Railway. `GET /api/status` reports whether the API key and persistent storage are configured, the backend storage type, dataset version, active extraction model and formula version; it never returns credentials.
+Railway startup fails if PostgreSQL is not configured; it cannot silently fall back to temporary files. Local runs without `DATABASE_URL` use `.data/`. `PORT` is supplied by Railway. `GET /api/status` reports whether the API key and persistent storage are configured, the backend storage type, dataset version, schema version, active extraction model and formula version; it never returns credentials.
 
 ## Data and limits
 
@@ -66,3 +66,7 @@ Imported Toolhub references remain in `design/reference/toolhub-codex-initial-ui
 ## Prototype data cleanup
 
 The one-time `clean-start-2026-10-19` migration moves existing workspace payloads into `hr_scoring_test_data_archive` and clears `hr_scoring_workspace_state` in a single transaction. The archive is not read by scoring, retrieval or learning. `hr_scoring_data_migrations` records completion; later deployments preserve new data. If archival fails, the reset rolls back. Browser result cache v1 is removed on loading the new UI. The original PDFs are untouched. An operator can restore archived records through PostgreSQL if needed.
+
+## Structured PostgreSQL tables
+
+Railway stores dimensions, bands, individual reference examples, sentence decisions, jobs, evidence and dimension scores in separate tables. Each evidence row stores retrieval match and independently assessed ceiling fulfillment in separate columns. Multiple examples with the same cap remain distinct by reference ID/context. See `docs/database.md` for the schema, constraints, model-space isolation, migration backups and rolling-deployment compatibility. The prior JSONB workspace table is retained only as a compatibility mirror; application reads use the normalized tables.
