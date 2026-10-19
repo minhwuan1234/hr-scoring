@@ -41,7 +41,7 @@ Potential / learning trajectory totals 70; functional readiness totals 30. Origi
 
 Main results contain only the total and nine dimension scores. Human review appears in a focused popup. No sample results or model internals are presented on the scoring screen.
 
-Use PostgreSQL (`DATABASE_URL`) or a mounted `SCORING_DATA_DIR` for durable references on Railway. Jobs are accessible for 24 hours, limited to 20 per workspace, and pruned lazily on scoring; references persist until storage is removed. Stored job evidence includes quotes and embeddings, not the original full CV. Browser session storage keeps recent result summaries and pending reviews for reload recovery.
+Railway requires PostgreSQL (`DATABASE_URL`); local development may use file storage. Jobs are accessible for 24 hours, limited to 20 per workspace, and pruned lazily on scoring; references persist until storage is removed. Stored job evidence includes quotes and embeddings, not the original full CV. Browser session storage keeps recent result summaries and pending reviews for reload recovery.
 
 ## Sentence migration
 
@@ -50,3 +50,7 @@ Jobs created before `sentence-v1` cannot be reviewed or retrieved under the new 
 ## Formula and model migration
 
 Jobs now use `band-interpolation-v1`; jobs made with the previous percentage-times-cap formula require re-uploading and rescoring. Stored references and human decisions are preserved. Extraction defaults to `gpt-5.6-luna`; the Railway start command explicitly sets this model so a stale environment setting cannot keep using GPT-6 Luna. Embeddings remain `text-embedding-3-small`.
+
+## Clean dataset
+
+`clean-start-2026-10-19` removes prototype test jobs, references and mappings from the active PostgreSQL table after archiving them atomically. The archive is excluded from all scoring queries. A migration marker prevents another reset on future deploys. The browser uses a fresh v2 result cache and removes v1.

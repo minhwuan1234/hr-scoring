@@ -44,10 +44,10 @@ npm start
 - `OPEN_AI_API_KEY`: required, server only. This exact spelling is used.
 - `OPENAI_MODEL`: optional for local runs, defaults to `gpt-5.6-luna`. The Railway start command explicitly sets this model to override an older deployment value. It also sets `MATCH_THRESHOLD=0.70` for automatic scoring.
 - `OPENAI_EMBEDDING_MODEL`: optional, defaults to `text-embedding-3-small`.
-- `DATABASE_URL`: recommended PostgreSQL connection string for durable human-approved references.
-- Alternatively, mount a Railway volume and set `SCORING_DATA_DIR` to a directory on that volume.
+- `DATABASE_URL`: required on Railway. Reference the existing Postgres service with `${{Postgres.DATABASE_URL}}`. The app initializes its PostgreSQL tables before accepting traffic.
+- `SCORING_DATA_DIR`: optional file storage for local development only.
 
-Without PostgreSQL or a mounted directory, the local `.data/` store works for development but Railway redeploys may remove references. `PORT` is supplied by Railway. `GET /api/status` reports whether the API key and persistent storage are configured, plus the active extraction model and formula version; it never returns credentials.
+Railway startup fails if PostgreSQL is not configured; it cannot silently fall back to temporary files. Local runs without `DATABASE_URL` use `.data/`. `PORT` is supplied by Railway. `GET /api/status` reports whether the API key and persistent storage are configured, the backend storage type, dataset version, active extraction model and formula version; it never returns credentials.
 
 ## Data and limits
 
@@ -62,3 +62,7 @@ Tests use fake providers and cover real PDF parsing plus scoring/review persiste
 ## Design references
 
 Imported Toolhub references remain in `design/reference/toolhub-codex-initial-ui/`.
+
+## Prototype data cleanup
+
+The one-time `clean-start-2026-10-19` migration moves existing workspace payloads into `hr_scoring_test_data_archive` and clears `hr_scoring_workspace_state` in a single transaction. The archive is not read by scoring, retrieval or learning. `hr_scoring_data_migrations` records completion; later deployments preserve new data. If archival fails, the reset rolls back. Browser result cache v1 is removed on loading the new UI. The original PDFs are untouched. An operator can restore archived records through PostgreSQL if needed.

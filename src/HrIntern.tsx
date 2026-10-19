@@ -9,7 +9,7 @@ import './scoring.css';
 
 type Stage = 'ready' | 'scoring' | 'review' | 'complete' | 'error';
 interface Candidate { id: string; name: string; file?: File; stage: Stage; result?: ScoreResult; error?: string }
-const SESSION = 'hr-scoring-jobs-v1';
+const SESSION = 'hr-scoring-jobs-v2';
 function restore(): Candidate[] {
   try { return JSON.parse(sessionStorage.getItem(SESSION) || '[]').filter((item: Candidate) => typeof item.id === 'string' && typeof item.name === 'string' && item.result?.id).slice(0,50); }
   catch { return []; }
@@ -40,6 +40,7 @@ export default function HrIntern() {
 
   useEffect(() => {
     mounted.current = true;
+    try { sessionStorage.removeItem('hr-scoring-jobs-v1'); } catch { /* Keep working if browser storage is unavailable. */ }
     for (const item of restore()) {
       void scoringRequest<ScoreResult>(`/api/jobs/${item.result!.id}`).then(result => patch(item.id,{result,stage:result.state})).catch(error => patch(item.id,{stage:'error',error:message(error)}));
     }

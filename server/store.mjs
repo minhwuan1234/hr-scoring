@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import pg from 'pg';
+import { DATASET_VERSION, initializePostgres } from './database.mjs';
 
 export function workspaceId(token) {
   if (!/^[a-f0-9]{64}$/.test(token || '')) throw Object.assign(new Error('Reload the page to initialize your workspace.'), { status: 401 });
@@ -9,16 +10,22 @@ export function workspaceId(token) {
 }
 
 export function createStore({ databaseUrl = process.env.DATABASE_URL, directory = process.env.SCORING_DATA_DIR || '.data' } = {}) {
+  if (process.env.RAILWAY_PROJECT_ID && !databaseUrl) throw new Error('DATABASE_URL is required on Railway. Connect the Postgres service before starting.');
   const pool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl, max: 5, connectionTimeoutMillis: 10000 }) : null;
   const locks = new Map();
   let schema;
+  async function initialize() {
+    if (pool) {
+      schema ||= initializePostgres(pool).catch(error => {schema=undefined;throw error;});
+      await schema;
+    }
+  }
   async function update(id, change) {
     const previous = locks.get(id) || Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
       const initial = () => ({ version: 1, references: [], mappings: {}, jobs: {} });
       if (pool) {
-        schema ||= pool.query('CREATE TABLE IF NOT EXISTS hr_scoring_workspace_state (workspace_id TEXT PRIMARY KEY, payload JSONB NOT NULL)').catch(error => {schema=undefined;throw error;});
-        await schema;
+        await initialize();
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
@@ -45,5 +52,5 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     locks.set(id, next);
     try { return await next; } finally { if (locks.get(id) === next) locks.delete(id); }
   }
-  return { update, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  return { update, initialize, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

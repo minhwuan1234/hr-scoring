@@ -29,7 +29,7 @@ const server = createServer(async (request,response) => {
   try {
     const path = new URL(request.url,'http://localhost').pathname;
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)) return json(response,200,await service.get(workspace,path.split('/')[3]));
@@ -70,5 +70,6 @@ const server = createServer(async (request,response) => {
   }
 });
 server.requestTimeout = 240000;
+await store.initialize();
 server.listen(Number(process.env.PORT || 3001),'0.0.0.0',()=>console.log('HR Scoring server ready.'));
 for (const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>server.close(async()=>{await store.close();process.exit(0);}));
