@@ -1,3 +1,5 @@
+import {isDeepStrictEqual} from 'node:util';
+import {archiveCandidates,fileCandidates,candidateRow} from './candidates.mjs';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -33,8 +35,10 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
           await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [id]);
           const state = await loadRelationalWorkspace(client,id);
           const before = structuredClone(state);
+          archiveCandidates(state);
           const output = await change(state);
-          if (JSON.stringify(before) !== JSON.stringify(state)) await writeRelationalWorkspace(client,id,state,before);
+          archiveCandidates(state);
+          if (!isDeepStrictEqual(before,state)) await writeRelationalWorkspace(client,id,state,before);
           await client.query('COMMIT');
           return output;
         } catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -44,7 +48,9 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
       const path = resolve(directory, `${id}.json`);
       let state;
       try { state = JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; state = initial(); }
+      archiveCandidates(state);
       const output = await change(state);
+      archiveCandidates(state);
       const temporary = path + '.tmp';
       await writeFile(temporary, JSON.stringify(state), { mode: 0o600 });
       await rename(temporary,path);
@@ -53,5 +59,11 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     locks.set(id, next);
     try { return await next; } finally { if (locks.get(id) === next) locks.delete(id); }
   }
-  return { update, initialize, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  async function candidates(owner){
+    if(!pool)return fileCandidates({update},owner);
+    await initialize();
+    const {rows}=await pool.query(`SELECT c.* FROM hr_scoring_candidates c WHERE c.workspace_id=$1 OR c.workspace_id IN (SELECT scoring_workspace_id FROM hr_scoring_position_scopes WHERE owner_workspace_id=$1) ORDER BY c.created_at_ms DESC,c.job_id`,[owner]);
+    return rows.map(candidateRow);
+  }
+  return { update, initialize, candidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

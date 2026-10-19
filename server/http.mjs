@@ -34,6 +34,7 @@ const server = createServer(async (request,response) => {
     if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
+      if(request.method==='GET' && path==='/api/candidates')return json(response,200,await store.candidates(workspace));
       if(request.method==='GET' && path==='/api/positions')return json(response,200,await positions.list(workspace));
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)){const {service,scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));return json(response,200,await service.get(scope,path.split('/')[3]));}
       if (request.method !== 'POST') return json(response,405,{error:'Method not allowed.'});
@@ -51,7 +52,7 @@ const server = createServer(async (request,response) => {
       const payload = await body(request);
       active++;
       try {
-        if (path === '/api/score'){const {service,scope}=await scorer(workspace,payload.positionId || 'hr-intern',payload.positionVersion ?? 1);return json(response,200,await service.analyze(scope,payload.text));}
+        if (path === '/api/score'){const {service,scope}=await scorer(workspace,payload.positionId || 'hr-intern',payload.positionVersion ?? 1);return json(response,200,await service.analyze(scope,payload.text,{fileName:payload.fileName}));}
         if (/^\/api\/jobs\/[\w-]+\/review$/.test(path)){const {service,scope}=await scorer(workspace,payload.positionId || 'hr-intern',payload.positionVersion ?? 1);return json(response,200,await service.review(scope,path.split('/')[3],payload.decisions));}
         return json(response,404,{error:'Not found.'});
       } finally { active--; }

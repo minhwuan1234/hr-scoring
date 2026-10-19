@@ -16,6 +16,14 @@ Select **Add position** in the sidebar to open the setup popup. Start blank or c
 
 All positions use the same PDF conversion and scoring algorithm. References, human decisions and candidate jobs are isolated by position and template version within the browser workspace. **Duplicate** creates an independent template. **Edit template** saves a new version; existing results and references keep their original rules, while new scoring uses the new version and its configured references. Templates persist in Railway PostgreSQL and survive reloads. Creating templates does not require an OpenAI request.
 
+## Dashboard and candidate history
+
+The sidebar **Dashboard** shows every saved CV scoring run across the workspace’s roles and template versions. Each role also has **Screening** and **History** tabs. Search by filename, filter by role or outcome, and open a CV to view its original score breakdown. Completed results use **Rejected** (0–50, red), **Consider** (>50 and <70, amber) and **Pass** (70–100, green). Pending human review stays neutral and its score is marked provisional.
+
+The dashboard refreshes automatically every 3 seconds while the page is visible, and immediately after scoring/review actions. These requests only read saved records; they do not call the model or rescore candidates. Refresh failures keep the last view and display an update warning.
+
+Candidate filename, role/version, timestamps, review status and score breakdown are saved independently of review jobs in PostgreSQL. Clearing the upload queue does not remove history, and job expiry/retention does not erase saved scores. Each scoring run is a separate record; filenames do not establish a unique candidate identity. Existing retained jobs are migrated into history; older jobs have a fallback filename when it was never stored. PDFs and complete CV text are not archived by this feature.
+
 ## Local development
 
 Requires Node.js 22.13+ (Node.js 24 recommended).

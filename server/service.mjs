@@ -1,3 +1,4 @@
+import {validateFileName} from './candidates.mjs';
 import {DEFAULT_POSITION} from './positions.mjs';
 import { SCORING_UNIT } from './sentences.mjs';
 import { randomUUID } from 'node:crypto';
@@ -48,7 +49,8 @@ export function createScoringService(store, provider = { embed, extractEvidence,
     return { ...result, position:{id:position.id,version:position.version,name:position.name,rubric:position.rubric.map(({id,title,max,bands})=>({id,title,max,bands}))}, pending: pending.map(({id,quote,statement,reason,dimension,band}) => ({id,quote,statement,reason,dimension,band,cap:getBand(dimension,band,rubric)[1]})) };
   }
 
-  async function analyze(workspace, text) {
+  async function analyze(workspace, text, metadata={}) {
+    const fileName=validateFileName(metadata.fileName);
     if (typeof text !== 'string' || text.trim().length < 10 || text.length > 100000) throw Object.assign(new Error('Use a CV containing 10–100,000 characters of readable text.'), { status:400 });
     const output = validateEvidence(await provider.extractEvidence(text,position), text, rubric);
     const [vectors,seeds] = await Promise.all([provider.embed(output.map(item => item.statement)),initialReferences()]);
@@ -59,7 +61,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
       while (jobs.length >= 20) delete state.jobs[jobs.shift().id];
       // Embedding spaces cannot be mixed when a configured model changes.
       if (!state.references.some(ref => ref.embeddingModel === embeddingModel)) state.references.push(...structuredClone(seeds));
-      const job = { id:randomUUID(), scoringUnit:SCORING_UNIT, scoringFormula:SCORING_FORMULA, createdAt:now, position:structuredClone(position), embeddingModel, referenceVersion:state.version, evidence: output.map((item,index) => {
+      const job = { id:randomUUID(),...(fileName?{fileName}:{}), scoringUnit:SCORING_UNIT, scoringFormula:SCORING_FORMULA, createdAt:now, position:structuredClone(position), embeddingModel, referenceVersion:state.version, evidence: output.map((item,index) => {
         const mapping = state.mappings[item.key];
         const evidence = { ...item, id:randomUUID(), vector:vectors[index], status:'pending' };
         if (mapping?.action === 'reject') return { ...evidence, status:'rejected' };

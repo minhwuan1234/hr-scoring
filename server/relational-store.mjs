@@ -1,9 +1,10 @@
+import {archiveCandidates,candidateRow} from './candidates.mjs';
 import {positionScope} from './positions.mjs';
 import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { RUBRIC } from './rubric.mjs';
 
-export const SCHEMA_VERSION = 'position-templates-v2';
+export const SCHEMA_VERSION = 'candidate-history-v3';
 export const emptyWorkspace = () => ({version:1,references:[],mappings:{},jobs:{}});
 const equal = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 const identity = ref => JSON.stringify([ref.id,ref.embeddingModel]);
@@ -25,13 +26,15 @@ export async function loadRelationalWorkspace(client,id,{syncLegacy=true}={}) {
   const state = {...emptyWorkspace(),version:metadata.version};
   const positions=await client.query('SELECT definition FROM hr_scoring_positions WHERE workspace_id=$1 ORDER BY position_id,version',[id]);
   if(positions.rows.length){state.positions={};for(const {definition} of positions.rows)(state.positions[definition.id]??=[]).push(definition);}
+  const candidates=await client.query('SELECT * FROM hr_scoring_candidates WHERE workspace_id=$1',[id]);
+  state.candidates=Object.fromEntries(candidates.rows.map(row=>[row.job_id,candidateRow(row)]));
   const refs = await client.query('SELECT * FROM hr_scoring_references WHERE workspace_id=$1 ORDER BY sort_order,reference_id,embedding_model',[id]);
   state.references = refs.rows.map(row=>({id:row.reference_id,dimension:row.dimension_id,band:row.band,cap:Number(row.cap),statement:row.context,vector:row.embedding,source:row.source,embeddingModel:row.embedding_model,...(row.approved_at ? {approvedAt:new Date(row.approved_at).toISOString()} : {})}));
   const decisions = await client.query('SELECT * FROM hr_scoring_sentence_decisions WHERE workspace_id=$1 ORDER BY sentence_key',[id]);
   for (const row of decisions.rows) state.mappings[row.sentence_key] = row.action === 'reject' ? {action:'reject'} : {action:'approve',dimension:row.dimension_id,referenceId:row.reference_id};
   const jobs = await client.query('SELECT * FROM hr_scoring_jobs WHERE workspace_id=$1 ORDER BY created_at_ms,job_id',[id]);
   for (const row of jobs.rows) {
-    const job = {id:row.job_id,createdAt:Number(row.created_at_ms),embeddingModel:row.embedding_model,referenceVersion:row.reference_version,evidence:[],...(row.scoring_unit ? {scoringUnit:row.scoring_unit} : {}),...(row.scoring_formula ? {scoringFormula:row.scoring_formula} : {}),...(row.position_snapshot ? {position:row.position_snapshot} : {})};
+    const job = {id:row.job_id,...(row.file_name?{fileName:row.file_name}:{}),createdAt:Number(row.created_at_ms),embeddingModel:row.embedding_model,referenceVersion:row.reference_version,evidence:[],...(row.scoring_unit ? {scoringUnit:row.scoring_unit} : {}),...(row.scoring_formula ? {scoringFormula:row.scoring_formula} : {}),...(row.position_snapshot ? {position:row.position_snapshot} : {})};
     job.result = {id:job.id,state:row.result_state,version:numeric(row.result_version),total:Number(row.total),dimensions:[],pending:[],details:[]};
     state.jobs[job.id]=job;
   }
@@ -53,7 +56,7 @@ export async function writeRelationalWorkspace(client,id,state,previous=emptyWor
   await client.query('INSERT INTO hr_scoring_workspaces(workspace_id,version) VALUES($1,$2) ON CONFLICT(workspace_id) DO UPDATE SET version=EXCLUDED.version,updated_at=NOW()',[id,state.version]);
   // Position versions are immutable. Older replicas may omit them from the
   // compatibility snapshot; never delete them when importing such snapshots.
-  state.positions??=previous.positions;
+  if(previous.positions)state.positions??=previous.positions;
   for(const versions of Object.values(state.positions || {})) for(const position of versions){
     const exists=(await client.query('SELECT definition FROM hr_scoring_positions WHERE workspace_id=$1 AND position_id=$2 AND version=$3',[id,position.id,position.version])).rows[0];
     if(exists){if(!isDeepStrictEqual(exists.definition,position))throw new Error('Position versions cannot be overwritten.');continue;}
@@ -65,6 +68,12 @@ export async function writeRelationalWorkspace(client,id,state,previous=emptyWor
     const scope=positionScope(id,position);
     await client.query('INSERT INTO hr_scoring_workspaces(workspace_id,version) VALUES($1,1) ON CONFLICT DO NOTHING',[scope]);
     await client.query('INSERT INTO hr_scoring_position_scopes(owner_workspace_id,position_id,position_version,scoring_workspace_id) VALUES($1,$2,$3,$4)',[id,position.id,position.version,scope]);
+  }
+  state.candidates??=previous.candidates;
+  archiveCandidates(state);
+  for(const c of Object.values(state.candidates || {})){
+    if(isDeepStrictEqual(c,previous.candidates?.[c.id]))continue;
+    await client.query(`INSERT INTO hr_scoring_candidates(workspace_id,job_id,file_name,position_id,position_version,position_name,created_at_ms,updated_at_ms,result_state,total,pending_count,dimensions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(workspace_id,job_id) DO UPDATE SET file_name=EXCLUDED.file_name,updated_at_ms=EXCLUDED.updated_at_ms,result_state=EXCLUDED.result_state,total=EXCLUDED.total,pending_count=EXCLUDED.pending_count,dimensions=EXCLUDED.dimensions`,[id,c.id,c.fileName,c.positionId,c.positionVersion,c.positionName,c.createdAt,c.updatedAt,c.state,c.total,c.pendingCount,JSON.stringify(c.dimensions)]);
   }
   const priorRefs=new Map(previous.references.map(ref=>[identity(ref),ref]));
   for(const [index,ref] of state.references.entries()) {
@@ -90,9 +99,9 @@ export async function writeRelationalWorkspace(client,id,state,previous=emptyWor
   for(const job of Object.values(state.jobs)) {
     if(equal(job,previous.jobs[job.id])) continue;
     const result=job.result;
-    await client.query(`INSERT INTO hr_scoring_jobs(workspace_id,job_id,created_at_ms,embedding_model,reference_version,scoring_unit,scoring_formula,result_version,result_state,total,position_id,position_version,position_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      ON CONFLICT(workspace_id,job_id) DO UPDATE SET reference_version=EXCLUDED.reference_version,scoring_unit=EXCLUDED.scoring_unit,scoring_formula=EXCLUDED.scoring_formula,result_version=EXCLUDED.result_version,result_state=EXCLUDED.result_state,total=EXCLUDED.total,position_id=EXCLUDED.position_id,position_version=EXCLUDED.position_version,position_snapshot=EXCLUDED.position_snapshot`,
-      [id,job.id,job.createdAt,job.embeddingModel,job.referenceVersion,job.scoringUnit || null,job.scoringFormula || null,result.version ?? null,result.state,result.total,job.position?.id || null,job.position?.version || null,job.position ? JSON.stringify(job.position) : null]);
+    await client.query(`INSERT INTO hr_scoring_jobs(workspace_id,job_id,created_at_ms,embedding_model,reference_version,scoring_unit,scoring_formula,result_version,result_state,total,position_id,position_version,position_snapshot,file_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      ON CONFLICT(workspace_id,job_id) DO UPDATE SET reference_version=EXCLUDED.reference_version,scoring_unit=EXCLUDED.scoring_unit,scoring_formula=EXCLUDED.scoring_formula,result_version=EXCLUDED.result_version,result_state=EXCLUDED.result_state,total=EXCLUDED.total,position_id=EXCLUDED.position_id,position_version=EXCLUDED.position_version,position_snapshot=EXCLUDED.position_snapshot,file_name=EXCLUDED.file_name`,
+      [id,job.id,job.createdAt,job.embeddingModel,job.referenceVersion,job.scoringUnit || null,job.scoringFormula || null,result.version ?? null,result.state,result.total,job.position?.id || null,job.position?.version || null,job.position ? JSON.stringify(job.position) : null,job.fileName || null]);
     // Replace this job's children atomically, leaving other jobs/references intact.
     await client.query('DELETE FROM hr_scoring_evidence WHERE workspace_id=$1 AND job_id=$2',[id,job.id]);
     await client.query('DELETE FROM hr_scoring_dimension_scores WHERE workspace_id=$1 AND job_id=$2',[id,job.id]);
@@ -118,6 +127,7 @@ export async function writeRelationalWorkspace(client,id,state,previous=emptyWor
 export async function initializeRelationalSchema(client) {
   await client.query(await readFile(new URL('./schema/relational.sql',import.meta.url),'utf8'));
   await client.query(await readFile(new URL('./schema/positions.sql',import.meta.url),'utf8'));
+  await client.query(await readFile(new URL('./schema/candidates.sql',import.meta.url),'utf8'));
   const applied=await client.query('SELECT schema_version FROM hr_scoring_schema_migrations WHERE schema_version=$1',[SCHEMA_VERSION]);
   if(applied.rows.length) return;
   await client.query('LOCK TABLE hr_scoring_workspace_state IN ACCESS EXCLUSIVE MODE');

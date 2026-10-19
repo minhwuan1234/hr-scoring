@@ -43,7 +43,10 @@ test('migrates actual PostgreSQL rows without merging equal-cap references or di
  assert.equal((await db.query('SELECT count(*)::int AS n FROM hr_scoring_dimensions')).rows[0].n,9);
  assert.equal((await db.query('SELECT count(*)::int AS n FROM hr_scoring_bands')).rows[0].n,27);
  assert.deepEqual((await db.query('SELECT payload FROM hr_scoring_schema_backups WHERE schema_version=$1 AND workspace_id=$2',[SCHEMA_VERSION,workspace])).rows[0].payload,original);
- assert.deepEqual(await store.update(workspace,state=>state),original);
+ const {candidates,...restored}=await store.update(workspace,state=>state);
+ assert.deepEqual(restored,original);
+ assert.equal(candidates['legacy-job'].total,24.6);
+ assert.equal(candidates['legacy-job'].fileName,'Previously scored CV');
 });
 
 test('typed evidence rows retain selection match separately from independent ceiling fulfillment',async()=>{

@@ -1,9 +1,10 @@
 # PostgreSQL storage model
 
-Railway uses the `position-templates-v2` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
+Railway uses the `candidate-history-v3` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
 
 | Table | Records |
 | --- | --- |
+| `hr_scoring_candidates` | Durable CV metadata and original score summaries, independent of expiring jobs. |
 | `hr_scoring_positions` | Immutable template definitions, owner workspace, position ID and version. |
 | `hr_scoring_position_scopes` | Maps each owner/position/version to its isolated scoring workspace. |
 | `hr_scoring_dimensions` | Default and user-configured criteria and their maximum scores. |
@@ -33,6 +34,16 @@ It also stores `reference_id`, original `quote`, `assessment_reason`, `assessmen
 Templates store their complete validated definition in JSONB, while each version’s criterion and band rows also populate the normalized scoring tables. Jobs retain position identity, version and a full immutable template snapshot. Custom criteria receive unique IDs, so separate roles cannot overwrite each other’s guides. The band constraint permits 1–12 bands per criterion, replacing the original three-band restriction.
 
 Each position version derives an isolated scoring workspace from the owner capability, position ID and version. HR Intern version 1 retains its existing workspace to preserve previously approved references and jobs. Additional contexts are seeded separately and remain distinct even when their caps match. Editing creates a new version and scope rather than rewriting the rules behind earlier results. Templates and previous versions are preserved during compatibility imports from older replicas.
+
+## Candidate history and live dashboard
+
+`GET /api/candidates` returns lightweight candidate score snapshots for the current owner workspace and its registered position scopes. The query joins ownership through `hr_scoring_position_scopes`; it does not read embeddings, evidence quotes or complete CV text. New score requests also carry `fileName`, which is validated and stored on the job.
+
+`hr_scoring_candidates` has a `(workspace_id, job_id)` key and retains filename, position/version/name, creation and update timestamps, result state, total, pending count and a JSONB breakdown containing criterion IDs, original titles, maximums and scores. The workspace foreign key preserves ownership; there is intentionally no job foreign key, so review-job expiry or deletion cannot cascade into history. Review completion updates the same row instead of creating a second candidate. Different scoring runs remain separate rows.
+
+Startup archives every retained legacy job during the backed-up migration. Reusable references, jobs, older template versions and the one-time cleanup marker are preserved. Compatibility imports cannot delete candidate snapshots when older replicas omit history. History remains available across template versions and review-job pruning. Previously deleted jobs or original filenames that were never stored cannot be reconstructed.
+
+The frontend polls this endpoint every 3 seconds while visible, also refreshing after score/review mutations. Status labels are derived from completed totals; pending review remains provisional. This is automatic polling, not a WebSocket stream, and does not trigger model calls.
 
 ## Constraints
 
