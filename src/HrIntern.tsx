@@ -102,7 +102,6 @@ export default function HrIntern() {
     <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>HR Intern</strong></div></header>
     <div className="content scoring-content">
       <div className="page-heading"><div><div className="eyebrow"><span>01</span>CANDIDATE SCREENING</div><h1>HR Intern<span className="title-dot">.</span></h1><p>Review experience. Discover potential.</p></div></div>
-      <div className="position-strip"><div><span className="role-icon"><FileText size={17} /></span><div><span className="position-eyebrow">POSITION</span><strong>{HR_INTERN_POSITION}</strong></div></div><span className="experience-tag">Experience <span>100 pts</span></span></div>
       <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
       {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
       <section className="workspace-panel scoring-workspace" aria-label="HR Intern experience scoring">
