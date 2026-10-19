@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
-import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, ShieldCheck, Upload, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, Upload, X } from 'lucide-react';
 import { pdfError } from './pdf';
 import { readCv } from './cv-input';
 import { HR_INTERN_DIMENSIONS, HR_INTERN_POSITION } from './hr-intern';
@@ -111,7 +111,6 @@ export default function HrIntern() {
           <span className="upload-icon"><Upload size={22} strokeWidth={1.6} /></span><div className="upload-copy"><h2>Drop your candidate CVs here</h2><p>PDF only · Up to 20 MB each · 50 files per batch</p></div><button className="button primary browse-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={16} />Choose CVs</button>
           <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         </div>
-        <div className="upload-footnote"><span><ShieldCheck size={14} />PDFs are read on your device. CV text is sent to OpenAI when you score.</span></div>
       </section>
       {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
       <section className="workspace-panel scoring-workspace" aria-label="HR Intern experience scoring">
@@ -128,7 +127,7 @@ export default function HrIntern() {
           : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to score this CV</h3><p>{selected.error}</p>{selected.file && <button className="button secondary" disabled={busy} onClick={() => patch(selected.id,{stage:'ready',error:undefined})}>Try again</button>}</div>
           : <div className="output-empty score-empty"><div className="score-preview-paper"><span /><span /><span /><span /></div><h3>{selected ? 'Ready when you are' : 'A clearer view of potential'}</h3><p>{selected ? 'Score this CV to see the total experience score and a breakdown for each part.' : 'Add candidate CVs to get started.'}</p></div>}
         </div>
-      </section><footer className="page-footer"><span>HR SCORING</span><p>HR Intern · Experience</p></footer>
+      </section>
     </div>
     {evidence && <ReviewDialog key={evidence.id} evidence={evidence} remaining={reviewing!.result!.pending.length} busy={reviewBusy} error={reviewError} onDecision={decision => void decide(decision)} onClose={() => {setReviewId(null);setReviewError('');}} />}
   </>;
