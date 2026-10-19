@@ -1,3 +1,4 @@
+import {createPositionRouter} from './position-router.mjs';
 import { LUNA_MODEL } from './openai.mjs';
 import { SCORING_FORMULA } from './engine.mjs';
 import { createServer } from 'node:http';
@@ -6,11 +7,11 @@ import { stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStore, workspaceId } from './store.mjs';
-import { createScoringService, MATCH_THRESHOLD } from './service.mjs';
+import { MATCH_THRESHOLD } from './service.mjs';
 
 const dist = resolve(fileURLToPath(new URL('../dist',import.meta.url)));
 const store = createStore();
-const service = createScoringService(store);
+const {positions,scorer} = createPositionRouter(store);
 const rateLimits = new Map();
 let active = 0;
 
@@ -21,33 +22,37 @@ function json(response,status,data) {
 async function body(request) {
   if (!(request.headers['content-type'] || '').startsWith('application/json')) throw Object.assign(new Error('Expected JSON.'), {status:415});
   const chunks = []; let length = 0;
-  for await (const chunk of request) { chunks.push(chunk); length += chunk.length; if (length > 450000) throw Object.assign(new Error('This CV is too large to score.'), {status:413}); }
+  for await (const chunk of request) { chunks.push(chunk); length += chunk.length; if (length > 450000) throw Object.assign(new Error('This request is too large.'), {status:413}); }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw Object.assign(new Error('Invalid JSON request.'), {status:400}); }
 }
 
 const server = createServer(async (request,response) => {
   try {
-    const path = new URL(request.url,'http://localhost').pathname;
+    const requestUrl=new URL(request.url,'http://localhost');
+    const path=requestUrl.pathname;
     if (path === '/api/health') return json(response,200,{ok:true});
     if (path === '/api/status') return json(response,200,{configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
-      if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)) return json(response,200,await service.get(workspace,path.split('/')[3]));
+      if(request.method==='GET' && path==='/api/positions')return json(response,200,await positions.list(workspace));
+      if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)){const {service,scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));return json(response,200,await service.get(scope,path.split('/')[3]));}
       if (request.method !== 'POST') return json(response,405,{error:'Method not allowed.'});
       const origin = request.headers.origin;
       if (origin && new URL(origin).host !== request.headers.host) return json(response,403,{error:'Cross-origin requests are not allowed.'});
-      if (!process.env.OPEN_AI_API_KEY) return json(response,503,{error:'Scoring is not configured yet. Add OPEN_AI_API_KEY on Railway.'});
       const ip = (process.env.RAILWAY_PROJECT_ID && request.headers['x-real-ip']) || request.socket.remoteAddress;
       const now = Date.now();
       if (rateLimits.size > 10000) for (const [key,item] of rateLimits) if (now > item.until) rateLimits.delete(key);
       let limit = rateLimits.get(ip);
       if (!limit || now > limit.until) { limit = {count:0,until:now+600000}; rateLimits.set(ip,limit); }
       if (++limit.count > 200 || active >= 3) return json(response,429,{error:'Too many scoring requests. Please retry in a few minutes.'});
+      if(path==='/api/positions')return json(response,201,await positions.create(workspace,await body(request)));
+      if(/^\/api\/positions\/[^/]+$/.test(path))return json(response,200,await positions.update(workspace,decodeURIComponent(path.split('/')[3]),await body(request)));
+      if (!process.env.OPEN_AI_API_KEY) return json(response,503,{error:'Scoring is not configured yet. Add OPEN_AI_API_KEY on Railway.'});
       const payload = await body(request);
       active++;
       try {
-        if (path === '/api/score') return json(response,200,await service.analyze(workspace,payload.text));
-        if (/^\/api\/jobs\/[\w-]+\/review$/.test(path)) return json(response,200,await service.review(workspace,path.split('/')[3],payload.decisions));
+        if (path === '/api/score'){const {service,scope}=await scorer(workspace,payload.positionId || 'hr-intern',payload.positionVersion ?? 1);return json(response,200,await service.analyze(scope,payload.text));}
+        if (/^\/api\/jobs\/[\w-]+\/review$/.test(path)){const {service,scope}=await scorer(workspace,payload.positionId || 'hr-intern',payload.positionVersion ?? 1);return json(response,200,await service.review(scope,path.split('/')[3],payload.decisions));}
         return json(response,404,{error:'Not found.'});
       } finally { active--; }
     }

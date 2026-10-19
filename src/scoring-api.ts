@@ -1,8 +1,10 @@
+import type {Criterion} from './positions';
 export interface EvidenceReview {
   id: string; quote: string; statement: string; reason: string;
   dimension: string; band: number; cap: number;
 }
 export interface ScoreResult {
+  position?: {id:string;version:number;name:string;rubric:Pick<Criterion,'id'|'title'|'max'|'bands'>[]};
   id: string; state: 'review' | 'complete'; version: number; total: number;
   dimensions: { id: string; max: number; score: number }[];
   pending: EvidenceReview[];

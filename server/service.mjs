@@ -1,19 +1,21 @@
+import {DEFAULT_POSITION} from './positions.mjs';
 import { SCORING_UNIT } from './sentences.mjs';
 import { randomUUID } from 'node:crypto';
-import { RUBRIC, getBand } from './rubric.mjs';
+import { getBand } from './rubric.mjs';
 import { SCORING_FORMULA, calculate, nearest, validateDecision, validateEvidence } from './engine.mjs';
 import { EMBEDDING_MODEL, embed, extractEvidence, assessCeilings, LUNA_MODEL } from './openai.mjs';
 
 export const MATCH_THRESHOLD = Number(process.env.MATCH_THRESHOLD || 0.70);
 
-export function createScoringService(store, provider = { embed, extractEvidence, assessCeilings }, embeddingModel = EMBEDDING_MODEL) {
+export function createScoringService(store, provider = { embed, extractEvidence, assessCeilings }, embeddingModel = EMBEDDING_MODEL, position = DEFAULT_POSITION) {
+  const rubric=position.rubric;
   let baseline;
   const threshold = MATCH_THRESHOLD;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error('MATCH_THRESHOLD must be between 0 and 1.');
 
   async function initialReferences() {
     if (!baseline) baseline = (async () => {
-      const records = RUBRIC.flatMap(d => d.bands.map(([min,max,statement],band) => ({ id:`rubric-${d.id}-${band}`, dimension:d.id, band, cap:max, statement, source:'user-rubric', embeddingModel })));
+      const records = rubric.flatMap(d => [...d.bands.map(([min,max,statement],band) => ({ id:`rubric-${d.id}-${band}`, dimension:d.id, band, cap:max, statement, source:'user-rubric', embeddingModel })),...(d.examples || []).map((example,index)=>({id:`example-${d.id}-${index}`,dimension:d.id,band:example.band,cap:example.cap,statement:example.statement,source:'user-rubric',embeddingModel}))]);
       const vectors = await provider.embed(records.map(record => record.statement));
       return records.map((record,index) => ({ ...record, vector:vectors[index] }));
     })().catch(error => { baseline = undefined; throw error; });
@@ -27,7 +29,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
       return {id:item.id,quote:item.quote,dimension:item.dimension,reference:{id:match.ref.id,statement:match.ref.statement,band:match.ref.band,cap:match.ref.cap}};
     });
     if (!pairs.length) return;
-    const assessments = await provider.assessCeilings(pairs);
+    const assessments = await provider.assessCeilings(pairs,position);
     if (!Array.isArray(assessments) || assessments.length !== pairs.length) throw Object.assign(new Error('The model returned incomplete ceiling assessments. Please retry.'), {status:502});
     const expected = new Map(pairs.map(pair => [pair.id,pair]));
     const seen = new Set();
@@ -43,12 +45,12 @@ export function createScoringService(store, provider = { embed, extractEvidence,
 
   function publicJob(job) {
     const { details, pending, ...result } = job.result;
-    return { ...result, pending: pending.map(({id,quote,statement,reason,dimension,band}) => ({id,quote,statement,reason,dimension,band,cap:getBand(dimension,band)[1]})) };
+    return { ...result, position:{id:position.id,version:position.version,name:position.name,rubric:position.rubric.map(({id,title,max,bands})=>({id,title,max,bands}))}, pending: pending.map(({id,quote,statement,reason,dimension,band}) => ({id,quote,statement,reason,dimension,band,cap:getBand(dimension,band,rubric)[1]})) };
   }
 
   async function analyze(workspace, text) {
     if (typeof text !== 'string' || text.trim().length < 10 || text.length > 100000) throw Object.assign(new Error('Use a CV containing 10–100,000 characters of readable text.'), { status:400 });
-    const output = validateEvidence(await provider.extractEvidence(text), text);
+    const output = validateEvidence(await provider.extractEvidence(text,position), text, rubric);
     const [vectors,seeds] = await Promise.all([provider.embed(output.map(item => item.statement)),initialReferences()]);
     return store.update(workspace, async state => {
       const now = Date.now();
@@ -57,7 +59,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
       while (jobs.length >= 20) delete state.jobs[jobs.shift().id];
       // Embedding spaces cannot be mixed when a configured model changes.
       if (!state.references.some(ref => ref.embeddingModel === embeddingModel)) state.references.push(...structuredClone(seeds));
-      const job = { id:randomUUID(), scoringUnit:SCORING_UNIT, scoringFormula:SCORING_FORMULA, createdAt:now, embeddingModel, referenceVersion:state.version, evidence: output.map((item,index) => {
+      const job = { id:randomUUID(), scoringUnit:SCORING_UNIT, scoringFormula:SCORING_FORMULA, createdAt:now, position:structuredClone(position), embeddingModel, referenceVersion:state.version, evidence: output.map((item,index) => {
         const mapping = state.mappings[item.key];
         const evidence = { ...item, id:randomUUID(), vector:vectors[index], status:'pending' };
         if (mapping?.action === 'reject') return { ...evidence, status:'rejected' };
@@ -73,7 +75,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
         return evidence;
       }) };
       await assessApproved(job,state.references);
-      job.result = calculate(job,state.references,embeddingModel);
+      job.result = calculate(job,state.references,embeddingModel,rubric);
       state.jobs[job.id] = job;
       return publicJob(job);
     });
@@ -81,7 +83,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
 
   async function review(workspace, jobId, decisions) {
     if (!Array.isArray(decisions) || !decisions.length || decisions.length > 36) throw Object.assign(new Error('Provide review decisions.'), { status:400 });
-    decisions.forEach(validateDecision);
+    decisions.forEach(decision=>validateDecision(decision,rubric));
     if (new Set(decisions.map(decision => decision.id)).size !== decisions.length) throw Object.assign(new Error('Duplicate decisions are not allowed.'), { status:400 });
     return store.update(workspace, async state => {
       const job = state.jobs[jobId];
@@ -107,7 +109,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
       state.version++;
       job.referenceVersion = state.version;
       await assessApproved(job,state.references);
-      job.result = calculate(job,state.references,embeddingModel);
+      job.result = calculate(job,state.references,embeddingModel,rubric);
       return publicJob(job);
     });
   }

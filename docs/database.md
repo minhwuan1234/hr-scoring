@@ -1,17 +1,19 @@
 # PostgreSQL storage model
 
-Railway uses the `relational-v1` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
+Railway uses the `position-templates-v2` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
 
 | Table | Records |
 | --- | --- |
-| `hr_scoring_dimensions` | Nine dimensions and their maximum scores. |
-| `hr_scoring_bands` | The 27 original floor/ceiling bands and guides. |
+| `hr_scoring_positions` | Immutable template definitions, owner workspace, position ID and version. |
+| `hr_scoring_position_scopes` | Maps each owner/position/version to its isolated scoring workspace. |
+| `hr_scoring_dimensions` | Default and user-configured criteria and their maximum scores. |
+| `hr_scoring_bands` | Default and user-configured floor/ceiling bands and guides. |
 | `hr_scoring_workspaces` | Workspace version and compatibility fingerprint. |
 | `hr_scoring_references` | One row per ceiling example, including context, floor, human cap, band, source and embedding model/vector. |
 | `hr_scoring_sentence_decisions` | Latest human approve/reject decision per sentence hash and workspace. |
 | `hr_scoring_jobs` | Job identity, creation time, model space, formula version, result state and total. |
 | `hr_scoring_evidence` | One full source sentence per job, selected reference, retrieval match, separate ceiling fulfillment and evidence score. |
-| `hr_scoring_dimension_scores` | Nine dimension score snapshots per job. |
+| `hr_scoring_dimension_scores` | Configured criterion score snapshots per job. |
 
 A reference is identified by `(workspace_id, reference_id, embedding_model)`. There is deliberately no uniqueness constraint on cap or context: multiple 30-point examples with different contexts remain separate rows. The lookup index groups references by workspace, dimension and embedding model.
 
@@ -23,6 +25,14 @@ Evidence stores two independent values:
 - `ceiling_fulfillment`: a separate model assessment used in `score_floor + ceiling_fulfillment * (score_cap - score_floor)`.
 
 It also stores `reference_id`, original `quote`, `assessment_reason`, `assessment_model`, `score_floor`, `score_cap` and `score`. Existing jobs with an older formula retain their snapshots and remain subject to the application's rescore guard.
+
+## Custom positions and versions
+
+`GET /api/positions` lists the current browser workspace’s latest templates. `POST /api/positions` creates a template; `POST /api/positions/:id` saves a new version with an optimistic version check. Scoring and review requests include `positionId` and `positionVersion`; job reads use those query parameters. Older clients default to HR Intern version 1.
+
+Templates store their complete validated definition in JSONB, while each version’s criterion and band rows also populate the normalized scoring tables. Jobs retain position identity, version and a full immutable template snapshot. Custom criteria receive unique IDs, so separate roles cannot overwrite each other’s guides. The band constraint permits 1–12 bands per criterion, replacing the original three-band restriction.
+
+Each position version derives an isolated scoring workspace from the owner capability, position ID and version. HR Intern version 1 retains its existing workspace to preserve previously approved references and jobs. Additional contexts are seeded separately and remain distinct even when their caps match. Editing creates a new version and scope rather than rewriting the rules behind earlier results. Templates and previous versions are preserved during compatibility imports from older replicas.
 
 ## Constraints
 

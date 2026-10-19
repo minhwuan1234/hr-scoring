@@ -1,14 +1,20 @@
 # HR Scoring
 
-HR Intern experience scoring with human-approved reference examples. React + TypeScript + Vite frontend, Node.js API, OpenAI Responses and embeddings.
+Configurable position templates and CV scoring with human-approved reference examples. React + TypeScript + Vite frontend, Node.js API, OpenAI Responses and embeddings.
 
 ## Workflow
 
 Select **Add CV** in the Candidates column, choose PDF CVs, then select **Score CVs**. PDF.js extracts text automatically on the device through the shared `src/cv-input.ts` pipeline, ready for reuse by future roles. There is no separate PDF-to-text screen. Scanned PDFs require OCR, which is not included.
 
-The server segments the CV into full sentences; Luna selects sentence IDs and assigns one best-fitting dimension per sentence. Sentences first match existing reference examples. A positive match at or above the configured threshold (default 70%) scores automatically, including new sentences. Weak or missing matches open a review popup: approve or reject, choose a dimension and original rubric band, set the reference cap, and edit the reusable description. Approved references and mappings are reused for later CVs. Final results show the total /100 and nine dimension scores. After selecting a reference, a separate GPT-5.6 Luna request assesses ceiling fulfillment from the original sentence. It receives no retrieval similarity or vectors. Scores use `band floor + fulfillment × (reference cap − band floor)`; retrieval similarity only selects the reference and gates human review. There are no sample scores.
+The server segments the CV into full sentences; Luna selects sentence IDs and assigns one best-fitting dimension per sentence. Sentences first match existing reference examples. A positive match at or above the configured threshold (default 70%) scores automatically, including new sentences. Weak or missing matches open a review popup: approve or reject, choose a dimension and original rubric band, set the reference cap, and edit the reusable description. Approved references and mappings are reused for later CVs. Final results show the total /100 and the configured criterion scores. After selecting a reference, a separate GPT-5.6 Luna request assesses ceiling fulfillment from the original sentence. It receives no retrieval similarity or vectors. Scores use `band floor + fulfillment × (reference cap − band floor)`; retrieval similarity only selects the reference and gates human review. There are no sample scores.
 
 See `docs/hr-intern-scoring.md` for the scoring formula and current assumptions.
+
+## Position templates
+
+Select **Add position** in the sidebar to open the setup popup. Start blank or copy an existing template, name the position, and configure its criteria, score bands, floors, ceilings and additional ceiling contexts. Users choose the number of criteria (1–20); HR Intern’s nine criteria are only its default template. Criterion maximums must total 100 points. Each criterion supports up to 12 bands and 30 additional contexts, including multiple contexts with the same cap. Add role-specific general rules when needed.
+
+All positions use the same PDF conversion and scoring algorithm. References, human decisions and candidate jobs are isolated by position and template version within the browser workspace. **Duplicate** creates an independent template. **Edit template** saves a new version; existing results and references keep their original rules, while new scoring uses the new version and its configured references. Templates persist in Railway PostgreSQL and survive reloads. Creating templates does not require an OpenAI request.
 
 ## Local development
 
