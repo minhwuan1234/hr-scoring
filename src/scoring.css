@@ -13,3 +13,20 @@
 .candidate-actions{display:flex;align-items:center;gap:8px}.add-cv-button{font-size:11px;padding:7px 10px;white-space:nowrap}.queue-empty .add-cv-button{margin-top:18px}.scoring-workspace .queue-panel>.panel-heading{gap:8px;flex-wrap:wrap;height:auto;min-height:56px;padding-top:12px;padding-bottom:12px}.candidate-actions .text-button{font-size:10px;white-space:nowrap}
 
 .add-cv-button{display:inline-flex;align-items:center;justify-content:center;gap:5px;background:transparent;border:0;color:#787774}.add-cv-button:hover:not(:disabled){color:#292824;text-decoration:underline;text-underline-offset:3px}
+
+/* Use the same field surface as Reference cap, including on Safari. */
+.review-dialog select {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 38px;
+  padding-right: 34px;
+  font-family: inherit;
+  line-height: 18px;
+  box-shadow: none;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23787774' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  cursor: pointer;
+}
+.review-dialog select:disabled { opacity: .55; cursor: not-allowed; }
