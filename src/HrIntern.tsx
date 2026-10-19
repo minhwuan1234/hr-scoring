@@ -1,0 +1,155 @@
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
+import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, ShieldCheck, Sparkles, Upload, X } from 'lucide-react';
+import { extractPdf, pdfError } from './pdf';
+import { HR_INTERN_DIMENSIONS, HR_INTERN_POSITION, SAMPLE_TOTAL } from './hr-intern';
+import './scoring.css';
+
+type Stage = 'ready' | 'scoring' | 'complete' | 'error';
+interface Candidate {
+  id: string;
+  name: string;
+  file?: File;
+  stage: Stage;
+  error?: string;
+}
+const SAMPLE: Candidate = { id: 'sample', name: 'Sample candidate.pdf', stage: 'ready' };
+
+export default function HrIntern() {
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const input = useRef<HTMLInputElement>(null);
+  const running = useRef(false);
+  const mounted = useRef(true);
+  const dragDepth = useRef(0);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const selected = candidates.find(candidate => candidate.id === selectedId);
+  const pending = candidates.filter(candidate => candidate.stage === 'ready');
+  const completed = candidates.filter(candidate => candidate.stage === 'complete').length;
+  const patch = (id: string, changes: Partial<Candidate>) => {
+    if (mounted.current) setCandidates(current => current.map(candidate => candidate.id === id ? { ...candidate, ...changes } : candidate));
+  };
+
+  function addFiles(files: File[]) {
+    if (running.current) return;
+    const messages: string[] = [];
+    const additions: Candidate[] = [];
+    for (const file of files) {
+      if (!/\.pdf$/i.test(file.name)) { messages.push(`${file.name}: please choose a PDF.`); continue; }
+      if (!file.size || file.size > 20 * 1024 * 1024) { messages.push(`${file.name}: choose a non-empty PDF up to 20 MB.`); continue; }
+      if (candidates.length + additions.length >= 50) { messages.push('Choose up to 50 files per batch.'); break; }
+      additions.push({ id: crypto.randomUUID(), name: file.name, file, stage: 'ready' });
+    }
+    setErrors(messages);
+    if (additions.length) {
+      setCandidates(current => [...current, ...additions]);
+      setSelectedId(current => current ?? additions[0].id);
+    }
+  }
+
+  async function preview(queue: Candidate[]) {
+    if (running.current || !queue.length) return;
+    running.current = true;
+    setBusy(true);
+    try {
+      for (const candidate of queue) {
+        if (!mounted.current) break;
+        setSelectedId(candidate.id);
+        patch(candidate.id, { stage: 'scoring', error: undefined });
+        try {
+          // PDF validation is real; scores are explicitly illustrative until a model is connected.
+          if (candidate.file) {
+            const result = await extractPdf(new Uint8Array(await candidate.file.arrayBuffer()), undefined, `${import.meta.env.BASE_URL}pdfjs/`);
+            if (!result.text) {
+              patch(candidate.id, { stage: 'error', error: 'This PDF has no readable text. Please use a text-based PDF.' });
+              continue;
+            }
+          }
+          await new Promise(resolve => setTimeout(resolve, 2200));
+          patch(candidate.id, { stage: 'complete' });
+        } catch (error) {
+          patch(candidate.id, { stage: 'error', error: pdfError(error) });
+        }
+      }
+    } finally {
+      running.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
+
+  function previewSample() {
+    if (running.current) return;
+    setCandidates(current => current.some(candidate => candidate.id === SAMPLE.id) ? current.map(candidate => candidate.id === SAMPLE.id ? { ...candidate, stage: 'ready', error: undefined } : candidate) : [...current, SAMPLE]);
+    setSelectedId(SAMPLE.id);
+    void preview([SAMPLE]);
+  }
+
+  function downloadResult() {
+    if (!selected || selected.stage !== 'complete') return;
+    const report = [
+      'HR Intern — Experience scoring',
+      'UI PREVIEW: Illustrative scores, not an evaluation of this candidate.',
+      `File: ${selected.name}`,
+      `Total: ${SAMPLE_TOTAL}/100`,
+      '',
+      ...HR_INTERN_DIMENSIONS.map(dimension => `${dimension.title}: ${dimension.sample}/${dimension.max}`),
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([report], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = selected.name.replace(/\.pdf$/i, '') + '-score-preview.txt';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function drop(event: DragEvent) {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    addFiles(Array.from(event.dataTransfer.files));
+  }
+
+  return <>
+    <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>HR Intern</strong></div><span className="scoring-preview-tag">UI preview</span></header>
+    <div className="content scoring-content">
+      <div className="page-heading"><div><div className="eyebrow"><span>01</span>CANDIDATE SCREENING</div><h1>HR Intern<span className="title-dot">.</span></h1><p>Review experience. Discover potential.</p></div><button className="button secondary sample-button" disabled={busy} onClick={previewSample}><Sparkles size={14} />Preview sample</button></div>
+
+      <div className="position-strip"><div><span className="role-icon"><FileText size={17} /></span><div><span className="position-eyebrow">POSITION</span><strong>{HR_INTERN_POSITION}</strong></div></div><span className="experience-tag">Experience <span>100 pts</span></span></div>
+
+      <section className="upload-section" aria-label="Upload candidate CVs">
+        <div className={`dropzone ${dragging ? 'dragging' : ''} ${busy ? 'disabled' : ''}`} onDragEnter={event => { event.preventDefault(); if (!busy) { dragDepth.current++; setDragging(true); } }} onDragOver={event => event.preventDefault()} onDragLeave={event => { event.preventDefault(); if (--dragDepth.current <= 0) setDragging(false); }} onDrop={drop}>
+          <span className="upload-icon"><Upload size={22} strokeWidth={1.6} /></span><div className="upload-copy"><h2>Drop your candidate CVs here</h2><p>PDF only · Up to 20 MB each · 50 files per batch</p></div><button className="button primary browse-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={16} />Choose CVs</button>
+          <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+        </div>
+        <div className="upload-footnote"><span><ShieldCheck size={14} />Your files stay on your device.</span></div>
+      </section>
+
+      {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error, index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
+
+      <section className="workspace-panel scoring-workspace" aria-label="HR Intern experience scoring">
+        <div className="queue-panel">
+          <div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2>{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div>
+          <div className="queue-list scoring-queue">
+            {!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add a CV to preview the<br />HR Intern scoring experience.</p></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
+              <button className="file-select" aria-pressed={selectedId === candidate.id} onClick={() => setSelectedId(candidate.id)}><span className="file-symbol"><FileText size={18} /><small>PDF</small></span><span className="file-detail"><strong title={candidate.name}>{candidate.name}</strong><span>HR Intern</span><span className={`status ${candidate.stage === 'complete' ? 'done' : candidate.stage === 'error' ? 'error' : ''}`}>{candidate.stage === 'scoring' ? <LoaderCircle size={11} className="spin" /> : candidate.stage === 'complete' ? <Check size={11} /> : candidate.stage === 'error' ? <CircleAlert size={11} /> : <span className="status-dot" />}{candidate.stage === 'ready' ? 'Ready' : candidate.stage === 'scoring' ? 'Scoring…' : candidate.stage === 'complete' ? 'Preview ready' : 'Unable to read'}</span></span></button><button className="icon-button remove-file" disabled={busy} aria-label={`Remove ${candidate.name}`} onClick={() => { const remaining = candidates.filter(item => item.id !== candidate.id); setCandidates(remaining); if (selectedId === candidate.id) setSelectedId(remaining[0]?.id ?? null); }}><X size={14} /></button>
+            </div>)}
+          </div>
+          <div className="queue-footer"><button className="button primary convert-button" disabled={busy || !pending.length} onClick={() => void preview(pending)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ScanText size={16} />}{busy ? 'Scoring…' : 'Preview scoring'}{!busy && <ArrowRight size={16} />}</button><p>{busy ? 'Please keep this tab open' : completed ? `${completed} preview${completed === 1 ? '' : 's'} ready` : 'Select CVs to get started'}</p></div>
+        </div>
+
+        <div className="output-panel scoring-output" aria-busy={selected?.stage === 'scoring'}>
+          <div className="panel-heading"><div className="output-title"><h2>Experience score</h2>{selected?.stage === 'complete' && <span className="scoring-preview-tag">Sample result</span>}</div>{selected?.stage === 'complete' && <button className="button secondary download-button" onClick={downloadResult}><ArrowDownToLine size={14} />Download</button>}</div>
+          {selected?.stage === 'complete' ? <div className="score-result">
+            <div className="score-total"><div><span className="score-label">TOTAL SCORE</span><div className="score-number"><strong>{SAMPLE_TOTAL}</strong><span>/ 100</span></div><p>Experience · HR Intern</p></div><div className="score-ring" style={{ '--score': SAMPLE_TOTAL } as CSSProperties}><span><Check size={25} strokeWidth={1.7} /></span></div></div>
+            <div className="dimension-heading"><h3>Score breakdown</h3><span>Score / Max</span></div>
+            <div className="dimension-list">{HR_INTERN_DIMENSIONS.map((dimension, index) => <div className="dimension-row" key={dimension.id}><span className="dimension-index">{String(index + 1).padStart(2, '0')}</span><div className="dimension-name"><span>{dimension.title}</span><div className="dimension-track"><span style={{ width: `${dimension.sample / dimension.max * 100}%` }} /></div></div><span className="dimension-points"><strong>{dimension.sample}</strong><span>/ {dimension.max}</span></span></div>)}</div>
+            <p className="illustrative-note">Illustrative scores for UI preview. This is not an assessment of the uploaded CV.</p>
+          </div> : selected?.stage === 'scoring' ? <div className="scoring-loading" role="status"><div className="loading-orbit"><ScanText size={27} strokeWidth={1.5} /><span /></div><h3>Scoring experience<span className="loading-dots">…</span></h3><p>Preparing your scoring preview.</p><div className="indeterminate-track"><span /></div></div> : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to read this CV</h3><p>{selected.error}</p><button className="button secondary" disabled={busy} onClick={() => patch(selected.id, { stage: 'ready', error: undefined })}>Try again</button></div> : <div className="output-empty score-empty"><div className="score-preview-paper"><span /><span /><span /><span /><div><Sparkles size={17} /></div></div><h3>{selected ? 'Ready when you are' : 'A clearer view of potential'}</h3><p>{selected ? 'Start the preview to see the total experience score and a breakdown for each part.' : 'Add a CV or preview a sample to explore the HR Intern experience score.'}</p>{!selected && <button className="text-button empty-sample" onClick={previewSample}>Preview a sample result<ArrowRight size={13} /></button>}</div>}
+        </div>
+      </section>
+      <footer className="page-footer"><span>HR SCORING</span><p>HR Intern · Experience</p></footer>
+    </div>
+  </>;
+}

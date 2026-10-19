@@ -5,6 +5,7 @@ import {
   Plus, ScanText, ShieldCheck, Upload, X,
 } from 'lucide-react';
 import { extractPdf, pdfError, type Extraction } from './pdf';
+import HrIntern from './HrIntern';
 
 type Status = 'queued' | 'processing' | 'done' | 'scan' | 'error';
 interface DocumentItem {
@@ -35,6 +36,7 @@ function download(text: string, name: string) {
 }
 
 export default function App() {
+  const [view, setView] = useState<'hr' | 'pdf'>('hr');
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -122,14 +124,16 @@ export default function App() {
       <div className="workspace-name"><span className="workspace-avatar">HR</span><span>HR Workspace<small>Recruitment workspace</small></span><LockKeyhole size={13} /></div>
       <p className="nav-label">CV WORKFLOW</p>
       <nav aria-label="Recruitment workflow">
-        <a className="nav-item active" href="#main" aria-current="page"><ScanText size={17} /><span>PDF to text</span><span className="nav-count">01</span></a>
-        <div className="nav-item upcoming"><FileText size={17} /><span>CV scoring</span><small>Coming soon</small></div>
+        <button className={`nav-item ${view === 'hr' ? 'active' : ''}`} onClick={() => setView('hr')} aria-current={view === 'hr' ? 'page' : undefined}><FileText size={17} /><span>HR Intern</span><span className="nav-count">01</span></button>
+        <button className={`nav-item ${view === 'pdf' ? 'active' : ''}`} onClick={() => setView('pdf')} aria-current={view === 'pdf' ? 'page' : undefined}><ScanText size={17} /><span>PDF to text</span><span className="nav-count">02</span></button>
       </nav>
-      <div className="sidebar-note"><span className="tiny-label">THE FIRST STEP</span><p>From candidate files<br />to readable information.</p><div className="mini-flow"><Files size={16} /><span /><ScanText size={16} /><span /><CheckCheck size={16} /></div></div>
-      <div className="sidebar-bottom"><button className="help-button" onClick={() => setHelp(!help)} aria-expanded={help}><HelpCircle size={16} />How it works<ChevronRight size={14} /></button><div className="profile"><span className="profile-avatar">HR</span><div>HR Workspace<small>PDF extraction · v0.1</small></div></div></div>
+      <div className="sidebar-note"><span className="tiny-label">MAKE ROOM FOR POTENTIAL</span><p>Early in their career.<br />Ready for what comes next.</p><div className="mini-flow"><Files size={16} /><span /><ScanText size={16} /><span /><CheckCheck size={16} /></div></div>
+      <div className="sidebar-bottom">{view === 'pdf' && <button className="help-button" onClick={() => setHelp(!help)} aria-expanded={help}><HelpCircle size={16} />How it works<ChevronRight size={14} /></button>}<div className="profile"><span className="profile-avatar">HR</span><div>HR Workspace<small>Candidate screening</small></div></div></div>
     </aside>
 
     <main id="main" className="main">
+      <div hidden={view !== 'hr'}><HrIntern /></div>
+      <div hidden={view !== 'pdf'}>
       <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>CV preparation</strong></div><span className="local-indicator"><span />Processed on your device</span></header>
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow"><span>01</span>DATA PREPARATION</div><h1>PDF to text<span className="title-dot">.</span></h1><p>Bring in your CVs. Extract the text. Get ready for what’s next.</p></div><button className="button secondary guide-button" onClick={() => setHelp(!help)} aria-expanded={help}><HelpCircle size={15} />How it works</button></div>
@@ -167,6 +171,7 @@ export default function App() {
 
         <div className="below-workspace"><div className="live-message" role="status">{notice || <><LockKeyhole size={13} />Results stay in this session. Download your text before closing the page.</>}</div>{ready.length > 1 && <button className="text-button download-all" onClick={() => download(ready.map(doc => `===== ${doc.file.name} =====\n\n${doc.result!.text}`).join('\n\n\n'), 'hr-scoring-text.txt')}><ArrowDownToLine size={14} />Download all text ({ready.length})</button>}</div>
         <footer className="page-footer"><span>HR SCORING</span><p>Better preparation. Smarter screening.</p></footer>
+      </div>
       </div>
     </main>
   </div>;
