@@ -19,9 +19,9 @@ export default function ReviewDialog({ evidence, remaining, busy, error, onDecis
   function chooseBand(value: number) { setBand(value); setCap(ranges[value][1]); }
   function decide(action: 'approve' | 'reject') { onDecision({id:evidence.id,action,dimension,band,cap,statement}); }
   return <dialog ref={dialog} className="review-dialog" aria-labelledby="review-title" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    <header><div><span className="eyebrow">HUMAN REVIEW</span><h2 id="review-title">Review new evidence</h2></div><button className="icon-button" disabled={busy} aria-label="Review later" onClick={onClose}><X size={18} /></button></header>
-    <div className="review-body"><p className="review-intro">Confirm where this evidence belongs and set its reference score. {remaining} item{remaining === 1 ? '' : 's'} remaining.</p>
-      <span className="review-keyword">{evidence.keyword}</span><blockquote>{evidence.quote}</blockquote>
+    <header><div><span className="eyebrow">HUMAN REVIEW</span><h2 id="review-title">Review new sentence</h2></div><button className="icon-button" disabled={busy} aria-label="Review later" onClick={onClose}><X size={18} /></button></header>
+    <div className="review-body"><p className="review-intro">Choose one dimension for this full sentence and set its reference score. {remaining} sentence{remaining === 1 ? '' : 's'} remaining.</p>
+      <blockquote>{evidence.quote}</blockquote>
       <label>Dimension<select value={dimension} disabled={busy} onChange={event => chooseDimension(event.target.value)}>{HR_INTERN_DIMENSIONS.map(item => <option key={item.id} value={item.id}>{item.title} / {item.max}</option>)}</select></label>
       <div className="review-fields"><label>Rubric band<select value={band} disabled={busy} onChange={event => chooseBand(Number(event.target.value))}>{ranges.map(([low,high],index) => <option key={index} value={index}>{low === high ? low : `${low}–${high}`} points</option>)}</select></label><label>Reference cap<input type="number" min={min} max={max} step="0.1" value={Number.isNaN(cap) ? '' : cap} disabled={busy} onChange={event => setCap(event.target.value === '' ? NaN : Number(event.target.value))} /><small>Allowed: {min}–{max}</small></label></div>
       <label>Reusable reference<textarea value={statement} maxLength={2500} disabled={busy} onChange={event => setStatement(event.target.value)} /></label>

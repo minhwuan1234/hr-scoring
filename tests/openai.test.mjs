@@ -13,6 +13,8 @@ test('Luna Responses request uses server key, structured evidence and no respons
    assert.equal(body.model,LUNA_MODEL); assert.equal(body.store,false);
    assert.equal(body.text.format.type,'json_schema'); assert.equal(body.text.format.strict,true);
    assert.ok(body.input[0].content[0].text.includes('synthetic CV text'));
+   const fields = body.text.format.schema.properties.evidence.items.properties;
+   assert.ok(fields.sentenceId); assert.equal(fields.keyword,undefined); assert.equal(fields.quote,undefined);
    return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:'{"evidence":[]}'}]}]})};
   };
   assert.deepEqual(await extractEvidence('synthetic CV text'),{evidence:[]});

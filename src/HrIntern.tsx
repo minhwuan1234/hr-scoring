@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
-import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, Upload, X } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, X } from 'lucide-react';
 import { pdfError } from './pdf';
 import { readCv } from './cv-input';
 import { HR_INTERN_DIMENSIONS, HR_INTERN_POSITION } from './hr-intern';
@@ -27,12 +27,10 @@ export default function HrIntern() {
   const [reviewBusy,setReviewBusy] = useState(false);
   const [reviewId,setReviewId] = useState<string | null>(null);
   const [reviewError,setReviewError] = useState('');
-  const [dragging,setDragging] = useState(false);
   const [errors,setErrors] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const running = useRef(false);
   const mounted = useRef(true);
-  const dragDepth = useRef(0);
   const selected = candidates.find(item => item.id === selectedId);
   const reviewing = candidates.find(item => item.id === reviewId);
   const evidence = reviewing?.result?.pending[0];
@@ -98,7 +96,6 @@ export default function HrIntern() {
     const url = URL.createObjectURL(new Blob([report],{type:'text/plain;charset=utf-8'}));
     const link = document.createElement('a'); link.href = url; link.download = selected.name.replace(/\.pdf$/i,'')+'-scores.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
   }
-  function drop(event: DragEvent) { event.preventDefault(); dragDepth.current = 0; setDragging(false); addFiles(Array.from(event.dataTransfer.files)); }
   const total = selected?.result?.total ?? 0;
 
   return <>
@@ -106,16 +103,11 @@ export default function HrIntern() {
     <div className="content scoring-content">
       <div className="page-heading"><div><div className="eyebrow"><span>01</span>CANDIDATE SCREENING</div><h1>HR Intern<span className="title-dot">.</span></h1><p>Review experience. Discover potential.</p></div></div>
       <div className="position-strip"><div><span className="role-icon"><FileText size={17} /></span><div><span className="position-eyebrow">POSITION</span><strong>{HR_INTERN_POSITION}</strong></div></div><span className="experience-tag">Experience <span>100 pts</span></span></div>
-      <section className="upload-section" aria-label="Upload candidate CVs">
-        <div className={`dropzone ${dragging ? 'dragging' : ''} ${busy ? 'disabled' : ''}`} onDragEnter={event => { event.preventDefault(); if (!busy) { dragDepth.current++; setDragging(true); } }} onDragOver={event => event.preventDefault()} onDragLeave={event => { event.preventDefault(); if (--dragDepth.current <= 0) setDragging(false); }} onDrop={drop}>
-          <span className="upload-icon"><Upload size={22} strokeWidth={1.6} /></span><div className="upload-copy"><h2>Drop your candidate CVs here</h2><p>PDF only · Up to 20 MB each · 50 files per batch</p></div><button className="button primary browse-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={16} />Choose CVs</button>
-          <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-        </div>
-      </section>
+      <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
       {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
       <section className="workspace-panel scoring-workspace" aria-label="HR Intern experience scoring">
-        <div className="queue-panel"><div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2>{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div>
-          <div className="queue-list scoring-queue">{!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add CVs to review their<br />HR Intern experience.</p></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
+        <div className="queue-panel"><div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2><div className="candidate-actions">{!!candidates.length && <button className="button secondary add-cv-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={14} />Add CV</button>}{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div></div>
+          <div className="queue-list scoring-queue">{!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add CVs to review their<br />HR Intern experience.</p><button className="button primary add-cv-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={15} />Add CV</button></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
             <button className="file-select" aria-pressed={selectedId === candidate.id} onClick={() => setSelectedId(candidate.id)}><span className="file-symbol"><FileText size={18} /><small>PDF</small></span><span className="file-detail"><strong title={candidate.name}>{candidate.name}</strong><span>HR Intern</span><span className={`status ${candidate.stage === 'complete' ? 'done' : candidate.stage === 'error' ? 'error' : ''}`}>{candidate.stage === 'scoring' ? <LoaderCircle size={11} className="spin" /> : candidate.stage === 'complete' ? <Check size={11} /> : candidate.stage === 'error' ? <CircleAlert size={11} /> : <span className="status-dot" />}{({ready:'Ready',scoring:'Scoring…',review:'Review needed',complete:'Scored',error:'Needs attention'})[candidate.stage]}</span></span></button><button className="icon-button remove-file" disabled={busy} aria-label={`Remove ${candidate.name}`} onClick={() => { const remaining = candidates.filter(item => item.id !== candidate.id); setCandidates(remaining); if (selectedId === candidate.id) setSelectedId(remaining[0]?.id ?? null); }}><X size={14} /></button>
           </div>)}</div>
           <div className="queue-footer"><button className="button primary convert-button" disabled={busy || !pending.length} onClick={() => void score(pending)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ScanText size={16} />}{busy ? 'Scoring…' : 'Score CVs'}{!busy && <ArrowRight size={16} />}</button><p>{busy ? 'Please keep this tab open' : completed ? `${completed} CV${completed === 1 ? '' : 's'} scored` : 'Select CVs to get started'}</p></div>
@@ -123,7 +115,7 @@ export default function HrIntern() {
         <div className="output-panel scoring-output" aria-busy={selected?.stage === 'scoring'}><div className="panel-heading"><h2>Experience score</h2>{selected?.stage === 'complete' && <button className="button secondary download-button" onClick={downloadResult}><ArrowDownToLine size={14} />Download</button>}</div>
           {selected?.stage === 'complete' ? <div className="score-result"><div className="score-total"><div><span className="score-label">TOTAL SCORE</span><div className="score-number"><strong>{total}</strong><span>/ 100</span></div><p>Experience · HR Intern</p></div><div className="score-ring" style={{'--score':total} as CSSProperties}><span><Check size={25} strokeWidth={1.7} /></span></div></div><div className="dimension-heading"><h3>Score breakdown</h3><span>Score / Max</span></div><div className="dimension-list">{HR_INTERN_DIMENSIONS.map((d,index) => { const points = selected.result?.dimensions.find(item => item.id === d.id)?.score ?? 0; return <div className="dimension-row" key={d.id}><span className="dimension-index">{String(index+1).padStart(2,'0')}</span><div className="dimension-name"><span>{d.title}</span><div className="dimension-track"><span style={{width:`${points/d.max*100}%`}} /></div></div><span className="dimension-points"><strong>{points}</strong><span>/ {d.max}</span></span></div>; })}</div></div>
           : selected?.stage === 'scoring' ? <div className="scoring-loading" role="status"><div className="loading-orbit"><ScanText size={27} strokeWidth={1.5} /><span /></div><h3>Scoring experience…</h3><p>Please wait while we review this CV.</p><div className="indeterminate-track"><span /></div></div>
-          : selected?.stage === 'review' ? <div className="output-empty"><div className="preview-illustration"><FileText size={28} /></div><h3>A quick review is needed</h3><p>Confirm {selected.result?.pending.length} new evidence item{selected.result?.pending.length === 1 ? '' : 's'} to finish scoring.</p><button className="button primary" onClick={() => {setReviewError('');setReviewId(selected.id);}}>Review evidence</button></div>
+          : selected?.stage === 'review' ? <div className="output-empty"><div className="preview-illustration"><FileText size={28} /></div><h3>A quick review is needed</h3><p>Confirm {selected.result?.pending.length} new sentence{selected.result?.pending.length === 1 ? '' : 's'} to finish scoring.</p><button className="button primary" onClick={() => {setReviewError('');setReviewId(selected.id);}}>Review sentences</button></div>
           : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to score this CV</h3><p>{selected.error}</p>{selected.file && <button className="button secondary" disabled={busy} onClick={() => patch(selected.id,{stage:'ready',error:undefined})}>Try again</button>}</div>
           : <div className="output-empty score-empty"><div className="score-preview-paper"><span /><span /><span /><span /></div><h3>{selected ? 'Ready when you are' : 'A clearer view of potential'}</h3><p>{selected ? 'Score this CV to see the total experience score and a breakdown for each part.' : 'Add candidate CVs to get started.'}</p></div>}
         </div>

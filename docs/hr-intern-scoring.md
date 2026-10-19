@@ -21,10 +21,10 @@ Potential / learning trajectory totals 70; functional readiness totals 30. Origi
 ## Pipeline
 
 1. Shared PDF reader extracts text locally, then sends it to the backend when scoring.
-2. Luna proposes up to 36 evidence items, each with an exact CV quote, exact keyword/phrase, reusable capability description, suggested dimension and band. The backend verifies quotes against CV text.
-3. Exact normalized phrases are used once per CV and in one dimension. Normalization covers Unicode, case and whitespace; synonyms stay distinct.
+2. The backend splits CV text into numbered full sentences using sentence boundaries, blank paragraphs and explicit bullet boundaries. PDF line wraps are joined within a sentence; commas, colons and semicolons do not split evidence. An unpunctuated bullet is one unit. Luna selects up to 36 IDs with a holistic reusable description, one best-fitting dimension and band. The backend supplies the complete source sentence; model-provided fragments cannot become separate evidence.
+3. Complete normalized sentences are used once per CV and in one dimension, even if Luna proposes different dimensions or selects repeated copies. Normalization covers Unicode, case, whitespace, bullet markers and ending sentence punctuation. Different sentences remain separate; there is no automatic semantic deduplication of paraphrases.
 4. Evidence descriptions become embeddings. The initial reference library contains the 27 band descriptions provided in the user's rubric; their caps are the corresponding band upper bounds.
-5. Unknown phrases always need human review, even when similarity is high. Previously approved phrases reuse the approved dimension/reference only when the new evidence meets the provisional similarity threshold (default 0.82). Otherwise they return for review. Rejected phrases stay rejected in that workspace.
+5. Unknown sentences always need human review, even when similarity is high. Previously approved sentences reuse the approved dimension/reference only when the new evidence meets the provisional similarity threshold (default 0.82). Otherwise they return for review. Rejected sentences stay rejected in that workspace.
 6. The popup lets the human reject evidence or approve its dimension, original band, reference cap and reusable description. The backend enforces the band's cap range. Pending/rejected items contribute no points. Human approval creates a reusable reference and pins this evidence to it, preserving the human's selected cap.
 7. Each approved evidence item is compared with eligible references in its dimension and embedding model space. Human-pinned references take precedence. For unpinned evidence, the closest reference by cosine similarity is selected.
 8. Evidence score = `max(0, cosine similarity) × reference cap`, with similarity capped at 1. Dimension score is the strongest approved evidence score, capped at the dimension maximum and rounded to one decimal. Total is the sum of all nine dimension scores.
@@ -42,3 +42,7 @@ Potential / learning trajectory totals 70; functional readiness totals 30. Origi
 Main results contain only the total and nine dimension scores. Human review appears in a focused popup. No sample results or model internals are presented on the scoring screen.
 
 Use PostgreSQL (`DATABASE_URL`) or a mounted `SCORING_DATA_DIR` for durable references on Railway. Jobs are accessible for 24 hours, limited to 20 per workspace, and pruned lazily on scoring; references persist until storage is removed. Stored job evidence includes quotes and embeddings, not the original full CV. Browser session storage keeps recent result summaries and pending reviews for reload recovery.
+
+## Sentence migration
+
+Jobs created before `sentence-v1` cannot be reviewed or retrieved under the new scoring rules. Re-upload and rescore those CVs. Legacy phrase mappings stay stored but cannot automatically approve full sentences; existing reference examples are preserved. Sentence mappings use versioned SHA-256 keys. Human caps, the cosine formula, maximum-per-dimension aggregation and the 70/30 rubric are unchanged.

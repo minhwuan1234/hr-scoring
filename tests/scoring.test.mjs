@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cosine, calculate, validateDecision, validateEvidence } from '../server/engine.mjs';
 import { createStore, workspaceId } from '../server/store.mjs';
+import { cvSentences, sentenceKey } from '../server/sentences.mjs';
 import { createScoringService } from '../server/service.mjs';
 
 const model = 'test-embedding';
@@ -24,20 +25,39 @@ test('unapproved or rejected evidence never earns points', () => {
   assert.equal(result.total,0); assert.equal(result.state,'review');
 });
 
-test('the same exact phrase cannot earn points in two houses', () => {
-  const result=calculate({id:'job',evidence:[ev,{...ev,dimension:'tools'}]},[ref,{...ref,id:'tool',dimension:'tools',cap:3}],model);
+test('the same sentence cannot earn points in two houses even with different fragment keys', () => {
+  const result=calculate({id:'job',evidence:[ev,{...ev,key:'different fragment',dimension:'tools'}]},[ref,{...ref,id:'tool',dimension:'tools',cap:3}],model);
   assert.equal(result.total,24); assert.equal(result.dimensions.find(d=>d.id==='tools').score,0);
 });
 
-test('synonyms remain separate while duplicate exact phrases are removed', () => {
-  const source='I self taught Excel. I studied independently. I self taught Excel.';
-  const record=(keyword,quote)=>({keyword,quote,statement:'Applied learning',reason:'Direct quote',dimension:'learning-drive',band:1});
-  const records=validateEvidence({evidence:[record('self taught','I self taught Excel.'),record('studied independently','I studied independently.'),record('self taught','I self taught Excel.')]},source);
-  assert.equal(records.length,2); assert.notEqual(records[0].key,records[1].key);
+test('a full sentence stays intact and cannot become multiple fragment reviews', () => {
+  const source='Project leader of two communication campaigns: managed a 5-designer team, designed core media assets, and supervised timelines and quality standards for all deliverables.';
+  const record={sentenceId:'s1',statement:'Led campaign delivery and team coordination.',reason:'Project ownership.',dimension:'process',band:2};
+  const records=validateEvidence({evidence:[record,{...record,dimension:'execution'},{...record,dimension:'employer-branding'}]},source);
+  assert.equal(records.length,1); assert.equal(records[0].quote,source);
+  assert.equal(records[0].dimension,'process');
 });
 
-test('rejects model evidence that was not present in the CV', () => {
-  assert.throws(()=>validateEvidence({evidence:[{...ev,reason:'x',quote:'Fabricated claim'}]},'Actual CV text'),/verified/);
+test('identical sentences across bullets and PDF line wrapping share one key', () => {
+  const source='• Learned Sheets and built a tracker.\n• Learned Sheets and\nbuilt a tracker.\n• Learned Excel and built a tracker.';
+  const sentences=cvSentences(source);
+  assert.equal(sentences.length,3);
+  assert.equal(sentences[0].key,sentences[1].key);
+  assert.notEqual(sentences[0].key,sentences[2].key);
+  const record=sentenceId=>({sentenceId,statement:'Applied learning.',reason:'Evidence.',dimension:'learning-drive',band:1});
+  assert.equal(validateEvidence({evidence:sentences.map(s=>record(s.sentenceId))},source).length,2);
+  assert.equal(sentenceKey('Learned Sheets.'),sentenceKey('learned Sheets'));
+});
+
+test('keeps multi-clause unpunctuated bullets whole and separates full sentences', () => {
+  const source='• Managed a team, built trackers; followed up weekly\n• Learned a tool and applied it\n\nI wrote content. I scheduled interviews.';
+  assert.deepEqual(cvSentences(source).map(s=>s.quote),['Managed a team, built trackers; followed up weekly','Learned a tool and applied it','I wrote content.','I scheduled interviews.']);
+});
+
+test('rejects invented sentence IDs and keyword-only provider output', () => {
+  const item={sentenceId:'s99',statement:'Claim.',reason:'Reason.',dimension:'tools',band:1};
+  assert.throws(()=>validateEvidence({evidence:[item]},'Actual CV text'),/verified/);
+  assert.throws(()=>validateEvidence({evidence:[{...ev,reason:'x'}]},'Actual CV text'),/invalid sentence/);
 });
 
 test('honors a human-selected reference cap even when a seeded reference is identical', () => {
@@ -47,7 +67,7 @@ test('honors a human-selected reference cap even when a seeded reference is iden
 });
 
 test('does not inflate a dimension by adding many overlapping evidence matches', () => {
-  const result=calculate({id:'job',evidence:[ev,{...ev,key:'synonym',vector:[1,0]}]},[ref],model);
+  const result=calculate({id:'job',evidence:[ev,{...ev,key:'other sentence',quote:'Learned Sheets and applied it in a project.',vector:[1,0]}]},[ref],model);
   assert.equal(result.total,30);
 });
 
@@ -68,7 +88,7 @@ test('human decisions persist and can be reused without sending raw CV text to s
   const workspace=workspaceId('a'.repeat(64));
   const provider={
     embed:async texts=>texts.map(()=>[1,0]),
-    extractEvidence:async()=>({evidence:[{keyword:'self taught',quote:'I self taught Excel and built a tracker.',statement:'Applied independent learning to a tracker.',reason:'Learned and applied.',dimension:'learning-drive',band:1}]}),
+    extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Applied independent learning to a tracker.',reason:'Learned and applied.',dimension:'learning-drive',band:1}]}),
   };
   try {
     const service=createScoringService(store,provider,model);
@@ -85,13 +105,16 @@ test('human decisions persist and can be reused without sending raw CV text to s
     await assert.rejects(()=>reopened.get(workspaceId('b'.repeat(64)),job.id),error=>error.status===404);
     const saved=await service.get(workspace,job.id);
     assert.equal(saved.version,reviewed.version); assert.equal(saved.total,18);
+    await store.update(workspace,state=>{ delete state.jobs[job.id].scoringUnit; });
+    await assert.rejects(()=>service.get(workspace,job.id),error=>error.status===409 && /full sentences/.test(error.message));
+    await assert.rejects(()=>service.review(workspace,job.id,[decision]),error=>error.status===409 && /full sentences/.test(error.message));
   } finally { await rm(directory,{recursive:true,force:true}); }
 });
 
 test('rejection completes review with zero points and is remembered', async () => {
   const directory=await mkdtemp(join(tmpdir(),'hr-reject-test-'));
   const store=createStore({databaseUrl:null,directory});
-  const provider={embed:async texts=>texts.map(()=>[1,0]),extractEvidence:async()=>({evidence:[{keyword:'Excel',quote:'Used Excel for a school task.',statement:'Exposure to Excel.',reason:'Tool exposure.',dimension:'tools',band:1}]})};
+  const provider={embed:async texts=>texts.map(()=>[1,0]),extractEvidence:async()=>({evidence:[{sentenceId:'s1',statement:'Exposure to Excel.',reason:'Tool exposure.',dimension:'tools',band:1}]})};
   try {
     const service=createScoringService(store,provider,model);
     const job=await service.analyze('workspace','Used Excel for a school task.');

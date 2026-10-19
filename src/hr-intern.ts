@@ -20,10 +20,9 @@ export const HR_INTERN_BANDS: Record<string, [number,number][]> = {
   process:[[0,1],[2,3],[4,4]], direction:[[0,0],[1,2],[3,3]], tools:[[0,0],[1,2],[3,3]],
 };
 
-// Exact phrases are unique; synonyms remain separate.
-export const KEYWORD_RULES = {
+// A full source sentence belongs to one dimension and is scored once.
+export const SENTENCE_RULES = {
   uniqueWithinCv: true,
-  maxDimensionsPerExactPhrase: 1,
-  mergeSynonyms: false,
+  maxDimensionsPerSentence: 1,
   requireHumanApproval: true,
 } as const;

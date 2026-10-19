@@ -1,6 +1,7 @@
 import { RUBRIC, getBand } from './rubric.mjs';
 
-export function normalize(text) { return text.normalize('NFC').toLocaleLowerCase('en').replace(/\s+/gu, ' ').trim(); }
+import { cvSentences, sentenceKey } from './sentences.mjs';
+export { normalize } from './sentences.mjs';
 
 export function cosine(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || !a.length || a.length !== b.length) throw new Error('Incompatible embeddings.');
@@ -20,13 +21,18 @@ export function nearest(evidence, references, embeddingModel) {
 
 export function validateEvidence(output, cvText) {
   if (!Array.isArray(output?.evidence) || output.evidence.length > 36) throw new Error('The model returned invalid evidence.');
+  const sentences = new Map(cvSentences(cvText).map(sentence => [sentence.sentenceId,sentence]));
   const seen = new Set();
   return output.evidence.map(item => {
-    if (!item || ['keyword','quote','statement','reason'].some(key => typeof item[key] !== 'string' || !item[key].trim() || item[key].length > 2500)) throw new Error('The model returned invalid evidence.');
+    if (!item || ['sentenceId','statement','reason'].some(key => typeof item[key] !== 'string' || !item[key].trim() || item[key].length > 2500)) throw new Error('The model returned invalid sentence evidence.');
     if (!Number.isInteger(item.band)) throw new Error('The model returned an invalid rubric band.');
     getBand(item.dimension, item.band);
-    if (!normalize(cvText).includes(normalize(item.quote)) || !normalize(item.quote).includes(normalize(item.keyword))) throw new Error('A model evidence quote could not be verified against the CV. Please retry.');
-    return { ...item, key: normalize(item.keyword) };
+    const sentence = sentences.get(item.sentenceId);
+    if (!sentence) throw new Error('A model evidence sentence could not be verified against the CV. Please retry.');
+    // Only server-defined full sentences can be selected. Model fragments and
+    // several proposed dimensions for one sentence collapse to the first item.
+    return { sentenceId:sentence.sentenceId, quote:sentence.quote, key:sentence.key,
+      statement:item.statement, reason:item.reason, dimension:item.dimension, band:item.band };
   }).filter(item => { if (seen.has(item.key)) return false; seen.add(item.key); return true; });
 }
 
@@ -34,13 +40,14 @@ export function calculate(job, references, embeddingModel) {
   const details = [];
   const used = new Set();
   for (const evidence of job.evidence) {
-    if (used.has(evidence.key) || evidence.status !== 'approved') continue;
-    used.add(evidence.key);
+    const key = sentenceKey(evidence.quote);
+    if (used.has(key) || evidence.status !== 'approved') continue;
+    used.add(key);
     const match = nearest(evidence, references, embeddingModel);
     if (!match) continue;
     // Requested rule: percentage of this reference's human-approved cap.
     // Band underflow is retained as an explicit unresolved rubric policy.
-    details.push({ key: evidence.key, dimension: evidence.dimension, referenceId: match.ref.id, similarity: match.similarity, cap: match.ref.cap, score: match.similarity * match.ref.cap });
+    details.push({ key, dimension: evidence.dimension, referenceId: match.ref.id, similarity: match.similarity, cap: match.ref.cap, score: match.similarity * match.ref.cap });
   }
   const dimensions = RUBRIC.map(dimension => {
     const matches = details.filter(detail => detail.dimension === dimension.id);

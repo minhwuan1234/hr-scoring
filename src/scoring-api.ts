@@ -1,5 +1,5 @@
 export interface EvidenceReview {
-  id: string; keyword: string; quote: string; statement: string; reason: string;
+  id: string; quote: string; statement: string; reason: string;
   dimension: string; band: number; cap: number;
 }
 export interface ScoreResult {
