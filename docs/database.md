@@ -1,6 +1,6 @@
 # PostgreSQL storage model
 
-Railway uses the `candidate-history-v3` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
+Railway uses the `candidate-profiles-v4` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
 
 | Table | Records |
 | --- | --- |
@@ -38,6 +38,8 @@ Each position version derives an isolated scoring workspace from the owner capab
 ## Candidate history and live dashboard
 
 `GET /api/candidates` returns lightweight candidate score snapshots for the current owner workspace and its registered position scopes. The query joins ownership through `hr_scoring_position_scopes`; it does not read embeddings, evidence quotes or complete CV text. New score requests also carry `fileName`, which is validated and stored on the job.
+
+`hr_scoring_candidates` also has nullable `candidate_name`, `phone`, `email`, and `linkedin_url` columns. The source job stores the validated `candidate_profile` JSONB object. Luna returns `candidateProfile` alongside evidence in the same strict-schema extraction response, avoiding an additional model request. Missing, ambiguous or unverified values remain null; names/contacts are never passed as metadata to the matching or ceiling-assessment stages. The API includes this profile in score results and candidate snapshots. Older replicas omitting profile fields cannot erase existing contacts during compatibility imports.
 
 `hr_scoring_candidates` has a `(workspace_id, job_id)` key and retains filename, position/version/name, creation and update timestamps, result state, total, pending count and a JSONB breakdown containing criterion IDs, original titles, maximums and scores. The workspace foreign key preserves ownership; there is intentionally no job foreign key, so review-job expiry or deletion cannot cascade into history. Review completion updates the same row instead of creating a second candidate. Different scoring runs remain separate rows.
 

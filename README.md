@@ -18,11 +18,13 @@ All positions use the same PDF conversion and scoring algorithm. References, hum
 
 ## Dashboard and candidate history
 
-The sidebar **Dashboard** shows every saved CV scoring run across the workspace’s roles and template versions. Each role also has **Screening** and **History** tabs. Search by filename, filter by role or outcome, and open a CV to view its original score breakdown. Completed results use **Rejected** (0–50, red), **Consider** (>50 and <70, amber) and **Pass** (70–100, green). Pending human review stays neutral and its score is marked provisional.
+The sidebar **Dashboard** shows every saved CV scoring run across the workspace’s roles and template versions. Each role also has **Screening** and **History** tabs. Search by candidate name, email, phone or filename, filter by role or outcome, and open a CV to view its original score breakdown. Completed results use **Rejected** (0–50, red), **Consider** (>50 and <70, amber) and **Pass** (70–100, green). Pending human review stays neutral and its score is marked provisional.
 
 The dashboard refreshes automatically every 3 seconds while the page is visible, and immediately after scoring/review actions. These requests only read saved records; they do not call the model or rescore candidates. Refresh failures keep the last view and display an update warning.
 
-Candidate filename, role/version, timestamps, review status and score breakdown are saved independently of review jobs in PostgreSQL. Clearing the upload queue does not remove history, and job expiry/retention does not erase saved scores. Each scoring run is a separate record; filenames do not establish a unique candidate identity. Existing retained jobs are migrated into history; older jobs have a fallback filename when it was never stored. PDFs and complete CV text are not archived by this feature.
+During the existing Luna CV-reading request, the model also extracts the applicant’s own name, phone, email and personal LinkedIn URL as separate nullable metadata. These fields appear in the dashboard, role history and candidate details; missing values display as a dash. Candidate names keep their original spelling and accents. The server verifies values against the supplied CV text and permits only personal LinkedIn URLs. Contacts are excluded from embedding and ceiling-assessment inputs and never affect points.
+
+Candidate contact metadata, filename, role/version, timestamps, review status and score breakdown are saved independently of review jobs in PostgreSQL. Clearing the upload queue does not remove history, and job expiry/retention does not erase saved scores. Each scoring run is a separate record; filenames do not establish a unique candidate identity. Existing retained jobs are migrated into history; older jobs have a fallback filename when it was never stored. Historical entries without a contact profile require re-uploading/scoring their CV, because complete CV text/PDFs were never archived. PDFs and complete CV text are not archived by this feature.
 
 ## Local development
 

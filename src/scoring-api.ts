@@ -3,7 +3,9 @@ export interface EvidenceReview {
   id: string; quote: string; statement: string; reason: string;
   dimension: string; band: number; cap: number;
 }
+export interface CandidateProfile {name:string|null;phone:string|null;email:string|null;linkedinUrl:string|null}
 export interface ScoreResult {
+  candidateProfile?:CandidateProfile;
   position?: {id:string;version:number;name:string;rubric:Pick<Criterion,'id'|'title'|'max'|'bands'>[]};
   id: string; state: 'review' | 'complete'; version: number; total: number;
   dimensions: { id: string; max: number; score: number }[];
