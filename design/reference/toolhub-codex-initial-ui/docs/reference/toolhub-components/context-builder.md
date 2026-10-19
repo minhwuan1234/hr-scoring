@@ -1,0 +1,14 @@
+/ContextBuilder.Dialog/ *Use the shared node dialog size, header, padding, and scrolling rules.*
+/ContextBuilder.Field/ *Provide one Context field with a text area and attached file chips inside the same bordered control. Put the label directly above the composer with a 6px gap. Let the composer fill the remaining height without stretching the label row.*
+/ContextBuilder.Files/ *Read TXT, Markdown, CSV, TSV, JSON, HTML, XML, YAML, RTF, PDF, DOCX, XLSX, and PPTX locally in the browser and extract their text. Scanned PDFs without embedded text are not OCR processed.*
+/ContextBuilder.Limits/ *Limit each file to 20 MB, each context to 20 files, and combined extracted text to 200,000 characters.*
+/ContextBuilder.Access/ *Connecting a Context Builder to a workflow node grants access to its tagged text and files. The edge does not inject the entire source automatically.*
+/ContextBuilder.ReferencePicker/ *In a Context Builder, typing slash opens a compact picker of existing tag names in this graph, filtered as the user types. Selecting a name inserts a reference; typing a new name and closing it with slash saves it for reuse. Support arrow keys, Enter, Tab, Escape, and pointer selection.*
+/ContextBuilder.TagSyntax/ *A first slash starts a tag name and immediately gives it a subtle gray background; a second slash ends the name. Hide slash delimiters visually so only the name appears in the gray tag. A first asterisk starts tag content and a second asterisk ends it.*
+/ContextBuilder.TagPreview/ *Clicking a tag reference opens a compact, scrollable preview of its current saved content. Read the current definition rather than copying content into the editor.*
+/ContextBuilder.TagResolver/ *Resolve slash references to their current text or extracted file content. A missing content definition or conflicting tag name must report an explicit error.*
+/ContextBuilder.TagStorage/ *Parse completed tag-name and tag-content pairs into graph tags with stable IDs. If the content exactly matches an attached file name, reference that file's extracted text by file ID.*
+/ContextBuilder.Editor/ *Keep syntax instructions and separate tag fields out of the editor. Migrate separately stored legacy tags into inline syntax when loading the graph.*
+/ContextBuilder.WorkflowTask/ *Double-click a Workflow node or choose Edit task to enter its task and select tags from only its directly connected active Context Builders. Slash offers only those connected tag names; selecting one inserts a gray tag reference. Hide the slash delimiters visually.*
+/ContextBuilder.SelectiveInput/ *A workflow model execution uses only explicitly referenced tags. Unreferenced sections and files stay excluded. A reference to a disconnected, inactive, missing, or conflicting tag reports an error.*
+/ContextBuilder.NoModelCall/ *The current task editor validates and resolves references locally and does not call a model on its own. Workflow model execution is still in development.*
