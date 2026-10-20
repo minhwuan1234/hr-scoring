@@ -10,7 +10,7 @@ function route(request){
 export function failureReport(error,request,requestId,durationMs){
  const status=Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:error.name==='TimeoutError'?504:500;
  const code=typeof error.code==='string'&&/^(?:[0-9A-Z]{5}|E[A-Z_]{2,40}|PROVIDER_[A-Z0-9_]{1,60}|MODEL_[A-Z_]{1,60}|LARK_[A-Z_]{1,60})$/.test(error.code)?error.code:'UNEXPECTED_ERROR';
- const message=status===500?'Scoring could not complete. Please retry or check server storage configuration.':error.name==='TimeoutError'?'Scoring timed out. Please retry.':error.message;
+ const message=status===500?(route(request)==='/lark/decision/:token'?'Unable to save this decision. Please retry.':'Scoring could not complete. Please retry or check server storage configuration.'):error.name==='TimeoutError'?'Scoring timed out. Please retry.':error.message;
  // Whitelist metadata. Never log raw errors, SQL, URLs, CVs or upstream bodies.
  const log={event:'request_failed',requestId,route:route(request),status,code,stage:stages.has(error.stage)?error.stage:'request',durationMs};
  const site=error.stack?.match(/\/(server\/[\w-]+\.mjs:\d+:\d+)/)?.[1];if(site)log.site=site;

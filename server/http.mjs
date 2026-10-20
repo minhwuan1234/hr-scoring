@@ -1,3 +1,4 @@
+import {allowedWriteOrigin} from './request-origin.mjs';
 import {createDecisionLinks} from './decision-links.mjs';
 import {decisionPage,decisionHeaders} from './decision-page.mjs';
 import {createCvLinks} from './cv-links.mjs';
@@ -11,7 +12,7 @@ import { LUNA_MODEL } from './openai.mjs';
 import { SCORING_FORMULA } from './engine.mjs';
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { stat,readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStore, workspaceId } from './store.mjs';
@@ -57,21 +58,25 @@ const server = createServer(async (request,response) => {
       response.writeHead(200,{'Content-Type':'application/pdf','Content-Length':bytes.length,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"});
       return response.end(request.method==='HEAD'?undefined:bytes);
     }
+    if(path==='/lark/decision-client.js'&&(request.method==='GET'||request.method==='HEAD')){
+      response.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+      return response.end(request.method==='HEAD'?undefined:await readFile(new URL('./decision-client.js',import.meta.url)));
+    }
     if(path.startsWith('/lark/decision/')){
       if(!['GET','HEAD','POST'].includes(request.method))return json(response,405,{error:'Method not allowed.'});
       const {scope,id,decision}=decisionLinks.verify(path.slice('/lark/decision/'.length));
       if(request.method==='POST'){
         checkWriteRate(request);
-        const origin=request.headers.origin;
-        if(origin&&new URL(origin).host!==request.headers.host)return json(response,403,{error:'Cross-origin requests are not allowed.'});
+        if(!allowedWriteOrigin(request,{decision:true}))return json(response,403,{error:'Cross-origin requests are not allowed.'});
       }
       const candidate=request.method==='POST'?await store.decideCandidate(scope,id,decision):await store.candidate(scope,id);
       if(!candidate) return json(response,404,{error:'Candidate not found.'});
+      if(request.method==='POST'&&request.headers.accept==='application/json')return json(response,200,{saved:true,decision});
       response.writeHead(200,decisionHeaders);
       return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
     }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-decisions-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-direct-decisions-v2',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
@@ -85,8 +90,7 @@ const server = createServer(async (request,response) => {
       if(request.method==='GET' && path==='/api/positions')return json(response,200,await positions.list(workspace));
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)){const {service,scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));return json(response,200,await service.get(scope,path.split('/')[3]));}
       if (request.method !== 'POST') return json(response,405,{error:'Method not allowed.'});
-      const origin = request.headers.origin;
-      if (origin && new URL(origin).host !== request.headers.host) return json(response,403,{error:'Cross-origin requests are not allowed.'});
+      if (!allowedWriteOrigin(request)) return json(response,403,{error:'Cross-origin requests are not allowed.'});
       checkWriteRate(request);
       if(active>=3)return json(response,429,{error:'Too many scoring requests. Please retry in a few minutes.'});
       if(/^\/api\/jobs\/[\w-]+\/cv$/.test(path)){

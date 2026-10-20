@@ -52,5 +52,15 @@ for(const backend of ['file','postgresql'])test(`${backend}: review decisions pe
 test('cards and decision pages keep scoring status separate and escape candidate text',()=>{
  const links=createCvLinks({env}),url=links.url(owner,id),card=candidateCard({...record,state:'complete',total:20,manualDecision:'accept'},url);
  assert.equal(card.header.template,'red');assert.match(JSON.stringify(card),/Rejected/);assert.match(JSON.stringify(card),/Decision\\nAccept/);
- const page=decisionPage({...record,candidateProfile:{name:'<script>bad()</script>'}},'accept');assert.doesNotMatch(page,/<script>/);assert.match(page,/&lt;script&gt;/);assert.match(page,/scoring status and points stay the same/);
+ const page=decisionPage({...record,candidateProfile:{name:'<script>bad()</script>'}},'accept');assert.doesNotMatch(page,/<script>bad/);assert.match(page,/&lt;script&gt;/);assert.match(page,/Saving decision/);assert.match(page,/decision-client.js/);assert.doesNotMatch(page,/Confirm candidate|<form/);
+});
+
+import {allowedWriteOrigin} from '../server/request-origin.mjs';
+test('origin checks reject malformed origins and restrict opaque Safari origins to the signed JSON flow',()=>{
+ const request=origin=>({headers:{origin,host:'app.test',accept:'application/json','x-decision-intent':'apply'}});
+ assert.equal(allowedWriteOrigin(request('null')),false);
+ assert.equal(allowedWriteOrigin(request('null'),{decision:true}),true);
+ for(const origin of ['malformed-origin','https://other.test','javascript:alert(1)'])assert.equal(allowedWriteOrigin(request(origin),{decision:true}),false);
+ assert.equal(allowedWriteOrigin(request('https://app.test'),{decision:true}),true);
+ assert.equal(allowedWriteOrigin({headers:{origin:'null',host:'app.test'}},{decision:true}),false);
 });
