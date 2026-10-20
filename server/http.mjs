@@ -1,3 +1,4 @@
+import {previewLarkDelivery} from './lark-delivery-plan.mjs';
 import {allowedWriteOrigin} from './request-origin.mjs';
 import {createDecisionLinks} from './decision-links.mjs';
 import {decisionPage,decisionHeaders} from './decision-page.mjs';
@@ -76,7 +77,7 @@ const server = createServer(async (request,response) => {
       return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
     }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-reviewer-decisions-v3',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-reviewer-decisions-v3',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
@@ -99,6 +100,7 @@ const server = createServer(async (request,response) => {
         const chunks=[];let length=0;for await(const chunk of request){length+=chunk.length;if(length>20*1024*1024)return json(response,413,{error:'Choose a PDF up to 20 MB.'});chunks.push(chunk);}
         await store.cvFiles.save(scope,path.split('/')[3],Buffer.concat(chunks));return json(response,200,{cvAvailable:true});
       }
+      if(path==='/api/lark/preview')return json(response,200,await previewLarkDelivery(store,workspace,(await body(request))?.candidates));
       if(path==='/api/lark/send'){const payload=await body(request);active++;try{const result=await sendCandidatesToLark(store,lark,workspace,payload,cvLinks,decisionLinks);if(!result.complete)console.warn(JSON.stringify({event:'lark_partial_delivery',requestId,sentCount:result.sentCount,totalCount:result.totalCount,codes:[...new Set(result.failures.map(f=>f.code))]}));return json(response,200,result);}finally{active--;}}
       if(path==='/api/lark/check'){await body(request);return json(response,200,await lark.check());}
       if(path==='/api/candidates/delete')return json(response,200,await deleteCandidates(store,positions,workspace,(await body(request)).candidates));

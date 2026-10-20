@@ -100,3 +100,36 @@ test('CV buttons require generated file links rather than arbitrary client URLs'
  for(const url of ['javascript:alert(1)','https://example.test/private','https://drive.google.com/file/d/test/view'])assert.throws(()=>validateCvUrl(url),e=>e.status===400);
  assert.equal(validateCvUrl(cvUrl),cvUrl);
 });
+
+import {SOCIAL_MEDIA_RECIPIENTS,recipientsForPosition} from '../server/lark-config.mjs';
+import {previewLarkDelivery} from '../server/lark-delivery-plan.mjs';
+import {reviewerName} from '../server/reviewers.mjs';
+test('Social Content Creator routes to the four named reviewers; HR keeps its test recipient',()=>{
+ assert.deepEqual(SOCIAL_MEDIA_RECIPIENTS,['ou_f77cf794a1319628941dd689ecc97e32','ou_9f7de713af63322b36ee7e41f5731313','ou_34667345f6e162ffccaa0b43f8c75986','ou_70ce15a771b137289d618549406121ad']);
+ assert.deepEqual(SOCIAL_MEDIA_RECIPIENTS.map(reviewerName),['Minh Quân','Trang Liu','Linh Giang','Annie']);
+ for(const positionName of ['Social Content Creator',' social MEDIA '])assert.deepEqual(recipientsForPosition({positionName}),SOCIAL_MEDIA_RECIPIENTS);
+ for(const positionName of ['HR Intern','Account','Social Media Analyst'])assert.deepEqual(recipientsForPosition({positionName}),LARK_RECIPIENTS);
+});
+test('mixed batches send each CV only to its own role group, with signed per-recipient decisions',async()=>{
+ const social={...candidate,id:'social-cv',positionId:'social-role',positionName:'Social Content Creator'},hr={...candidate,id:'hr-cv',positionId:'hr-intern',positionName:'HR Intern'};
+ const saved={candidates:async()=>[social,hr]},batch={...payload,candidates:[social,hr].map(c=>({id:c.id,positionId:c.positionId,positionVersion:1,positionName:'invented social media'})),receivers:['ou_4eb96bd84a22b6511fcb316d35ded621']};
+ assert.deepEqual(await previewLarkDelivery(saved,owner,batch.candidates),{recipientCount:4,totalCount:5});
+ const sent=[];const lark={check:async()=>{},sendCard:async(receiver,card,uuid)=>{sent.push({receiver,card,uuid});}};
+ const result=await sendCandidatesToLark(saved,lark,owner,batch,links,decisions);assert.equal(result.sentCount,5);assert.equal(result.totalCount,5);assert.equal(result.recipientCount,4);
+ for(const {receiver,card} of sent){
+  const action=card.elements.filter(e=>e.tag==='action')[1].actions[0],verified=decisions.verify(new URL(action.url).pathname.split('/').at(-1));
+  assert.equal(verified.receiver,receiver);assert.equal(verified.decision,'accept');
+  if(receiver!==LARK_RECIPIENTS[0])assert.equal(verified.id,social.id,'HR CV never reaches Social-only recipients');
+ }
+ assert.equal(sent.filter(s=>s.receiver===LARK_RECIPIENTS[0]).length,2);assert.equal(new Set(sent.map(s=>s.uuid)).size,5);
+ let fail=true;const attempts=[];
+ const partial={check:async()=>{},sendCard:async(receiver,card,uuid)=>{attempts.push(uuid);if(receiver===SOCIAL_MEDIA_RECIPIENTS[2]&&fail)throw Object.assign(new Error('Synthetic denied delivery'),{code:'LARK_SEND_REJECTED'});}};
+ const first=await sendCandidatesToLark(saved,partial,owner,batch,links,decisions);assert.equal(first.sentCount,4);assert.equal(first.failures.length,1);assert.equal(first.failures[0].candidateId,social.id);
+ fail=false;const retry=await sendCandidatesToLark(saved,partial,owner,batch,links,decisions);assert.equal(retry.complete,true);assert.deepEqual(attempts.slice(0,5),attempts.slice(5));
+ await assert.rejects(()=>previewLarkDelivery({candidates:async()=>[]},owner,batch.candidates),e=>e.status===404);
+});
+test('low-level Lark client accepts the new configured reviewers',async()=>{
+ const receivers=[];const client=createLarkClient({env,fetcher:async(url,options)=>{if(url.endsWith('/internal'))return success();receivers.push(JSON.parse(options.body).receive_id);return {ok:true,json:async()=>({code:0,data:{message_id:'synthetic-new-recipient'}})};}});
+ for(const receiver of SOCIAL_MEDIA_RECIPIENTS)await client.sendCard(receiver,candidateCard(candidate,cvUrl),'synthetic-id');
+ assert.deepEqual(receivers,SOCIAL_MEDIA_RECIPIENTS);
+});

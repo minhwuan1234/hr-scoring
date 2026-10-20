@@ -1,4 +1,4 @@
-import {LARK_RECIPIENTS} from './lark-config.mjs';
+import {LARK_RECIPIENTS,LARK_OUTBOUND_RECIPIENTS} from './lark-config.mjs';
 const API='https://open.larksuite.com/open-apis';
 const failure=(message,status,code)=>Object.assign(new Error(message),{status,code,stage:'lark-auth'});
 // Secrets and tenant tokens stay in this server-only client.
@@ -24,7 +24,7 @@ export function createLarkClient({env=process.env,fetcher=(...args)=>fetch(...ar
  }
  async function check(){await token();return {connected:true,recipientCount:LARK_RECIPIENTS.length};}
  async function sendCard(receiver,card,uuid){
-  if(!LARK_RECIPIENTS.includes(receiver))throw failure('Choose a configured Lark recipient.',400,'LARK_RECIPIENT_INVALID');
+  if(!LARK_OUTBOUND_RECIPIENTS.includes(receiver))throw failure('Choose a configured Lark recipient.',400,'LARK_RECIPIENT_INVALID');
   const content=JSON.stringify(card);
   if(Buffer.byteLength(content,'utf8')>28000)throw failure('This candidate card exceeds the Lark message size limit.',413,'LARK_CARD_TOO_LARGE');
   const accessToken=await token();let response;
