@@ -1,3 +1,5 @@
+import {sendCandidatesToLark} from './lark-send.mjs';
+import {createLarkClient} from './lark.mjs';
 import {randomUUID} from 'node:crypto';
 import {failureReport} from './failure-report.mjs';
 import {deleteCandidates} from './candidate-deletion.mjs';
@@ -15,6 +17,7 @@ import { MATCH_THRESHOLD } from './service.mjs';
 const dist = resolve(fileURLToPath(new URL('../dist',import.meta.url)));
 const store = createStore();
 const {positions,scorer} = createPositionRouter(store);
+const lark=createLarkClient();
 const rateLimits = new Map();
 let active = 0;
 
@@ -43,6 +46,7 @@ const server = createServer(async (request,response) => {
         const {bytes,fileName}=await store.cvFiles.get(scope,path.split('/')[3]);
         response.writeHead(200,{'Content-Type':'application/pdf','Content-Length':bytes.length,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});return response.end(bytes);
       }
+      if(request.method==='GET' && path==='/api/lark/status')return json(response,200,lark.status());
       if(request.method==='GET' && path==='/api/candidates')return json(response,200,await store.candidates(workspace));
       if(request.method==='GET' && path==='/api/positions')return json(response,200,await positions.list(workspace));
       if (request.method === 'GET' && /^\/api\/jobs\/[\w-]+$/.test(path)){const {service,scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));return json(response,200,await service.get(scope,path.split('/')[3]));}
@@ -61,6 +65,8 @@ const server = createServer(async (request,response) => {
         const chunks=[];let length=0;for await(const chunk of request){length+=chunk.length;if(length>20*1024*1024)return json(response,413,{error:'Choose a PDF up to 20 MB.'});chunks.push(chunk);}
         await store.cvFiles.save(scope,path.split('/')[3],Buffer.concat(chunks));return json(response,200,{cvAvailable:true});
       }
+      if(path==='/api/lark/send'){const payload=await body(request);active++;try{const result=await sendCandidatesToLark(store,lark,workspace,payload);if(!result.complete)console.warn(JSON.stringify({event:'lark_partial_delivery',requestId,sentCount:result.sentCount,totalCount:result.totalCount,codes:[...new Set(result.failures.map(f=>f.code))]}));return json(response,200,result);}finally{active--;}}
+      if(path==='/api/lark/check'){await body(request);return json(response,200,await lark.check());}
       if(path==='/api/candidates/delete')return json(response,200,await deleteCandidates(store,positions,workspace,(await body(request)).candidates));
       if(path==='/api/positions')return json(response,201,await positions.create(workspace,await body(request)));
       if(/^\/api\/positions\/[^/]+$/.test(path))return json(response,200,await positions.update(workspace,decodeURIComponent(path.split('/')[3]),await body(request)));
