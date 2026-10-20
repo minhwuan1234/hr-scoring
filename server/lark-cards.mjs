@@ -1,3 +1,4 @@
+import {decisionCounts} from './reviewers.mjs';
 import {SETUP_CALL_URL} from './lark-config.mjs';
 export function validateCvUrl(value){
  try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.port||!/^\/api\/shared-cvs\/v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(url.pathname)||url.search||url.hash)throw new Error();return url.href;}
@@ -15,7 +16,7 @@ export function candidateCard(candidate,cvUrl,decisionUrls){
   {tag:'hr'},
   {tag:'div',fields:[field('Total score',`${candidate.total}/100${review?' (provisional)':''}`),field('Status',label)]},
   {tag:'div',fields:[field('Phone',profile.phone),field('Email',profile.email)]},
-  {tag:'div',text:text(`Decision\n${candidate.manualDecision==='accept'?'Accept':candidate.manualDecision==='denied'?'Reject':'—'}`)},
+  {tag:'div',text:text(`Decision\nAccept: ${decisionCounts(candidate).accept} · Reject: ${decisionCounts(candidate).reject}`)},
   {tag:'hr'},{tag:'div',text:text('Score breakdown')},
   ...candidate.dimensions.map((dimension,index)=>({tag:'div',text:text(`${index+1}. ${dimension.title}\nScore: ${dimension.score}/${dimension.max}`)})),
   {tag:'hr'},

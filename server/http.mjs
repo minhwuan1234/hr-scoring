@@ -64,19 +64,19 @@ const server = createServer(async (request,response) => {
     }
     if(path.startsWith('/lark/decision/')){
       if(!['GET','HEAD','POST'].includes(request.method))return json(response,405,{error:'Method not allowed.'});
-      const {scope,id,decision}=decisionLinks.verify(path.slice('/lark/decision/'.length));
+      const {scope,id,decision,receiver}=decisionLinks.verify(path.slice('/lark/decision/'.length));
       if(request.method==='POST'){
         checkWriteRate(request);
         if(!allowedWriteOrigin(request,{decision:true}))return json(response,403,{error:'Cross-origin requests are not allowed.'});
       }
-      const candidate=request.method==='POST'?await store.decideCandidate(scope,id,decision):await store.candidate(scope,id);
+      const candidate=request.method==='POST'?await store.decideCandidate(scope,id,decision,receiver):await store.candidate(scope,id);
       if(!candidate) return json(response,404,{error:'Candidate not found.'});
       if(request.method==='POST'&&request.headers.accept==='application/json')return json(response,200,{saved:true,decision});
       response.writeHead(200,decisionHeaders);
       return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
     }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-direct-decisions-v2',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-reviewer-decisions-v3',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){

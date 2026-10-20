@@ -1,3 +1,4 @@
+import {reviewerName} from './reviewers.mjs';
 import {candidateQuery,fileCandidatePage,postgresCandidatePage} from './candidate-pages.mjs';
 import {readPositionCatalog,persistPositionCatalog} from './position-store.mjs';
 import {readPublicJob} from './job-reader.mjs';
@@ -89,9 +90,10 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
   }
   async function readJob(workspace,id){if(!pool){const state=await readFileState(workspace);archiveCandidates(state);return state.jobs[id];}await initialize();return readPublicJob(pool,workspace,id);}
   async function candidate(scope,id){if(!pool)return (await readFileState(scope)).candidates?.[id];await initialize();const {rows}=await pool.query('SELECT * FROM hr_scoring_candidates WHERE workspace_id=$1 AND job_id=$2',[scope,id]);return rows[0]?candidateRow(rows[0]):undefined;}
-  async function decideCandidate(scope,id,decision){
+  async function decideCandidate(scope,id,decision,receiver){
     if(!['accept','denied'].includes(decision))throw Object.assign(new Error('Choose Accept or Denied.'),{status:400});
-    return update(scope,state=>{const c=state.candidates?.[id];if(!c||state.deletedCandidates?.[id])throw Object.assign(new Error('This CV is no longer available.'),{status:404});if(c.manualDecision!==decision){c.manualDecision=decision;c.decisionAt=Date.now();c.updatedAt=c.decisionAt;}return structuredClone(c);});
+    const name=reviewerName(receiver);if(!name)throw Object.assign(new Error('Unknown reviewer.'),{status:400});
+    return update(scope,state=>{const c=state.candidates?.[id];if(!c||state.deletedCandidates?.[id])throw Object.assign(new Error('This CV is no longer available.'),{status:404});c.reviewerDecisions??={};if(c.reviewerDecisions[receiver]?.decision!==decision){const decidedAt=Math.max(Date.now(),(c.reviewerDecisions[receiver]?.decidedAt||0)+1);c.reviewerDecisions[receiver]={name,decision,decidedAt};c.updatedAt=decidedAt;}return structuredClone(c);});
   }
   async function candidatePage(owner,input){const query=candidateQuery(input);if(!pool)return fileCandidatePage(await fileCandidates({update},owner),query,owner);await initialize();return postgresCandidatePage(pool,owner,query);}
   async function candidates(owner,selection){

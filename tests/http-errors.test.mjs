@@ -66,16 +66,16 @@ test('Lark links automatically submit only the signed decision and handle Safari
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Synthetic server did not start.')),10000);child.stdout.on('data',chunk=>{if(chunk.toString().includes('server ready')){clearTimeout(timer);resolve();}});child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',()=>{clearTimeout(timer);reject(new Error('Synthetic server exited early.'));});});
   const base=`http://127.0.0.1:${port}`;
   const get=await fetch(base+path);assert.equal(get.status,200);const html=await get.text();assert.match(html,/Saving decision/);assert.match(html,/decision-client.js/);assert.doesNotMatch(html,/Confirm candidate|<form/);assert.equal(get.headers.get('referrer-policy'),'no-referrer');assert.equal(get.headers.get('cache-control'),'no-store');
-  assert.equal((await fetch(base+path,{method:'HEAD'})).status,200);assert.equal((await store.candidate(owner,id)).manualDecision,undefined);
+  assert.equal((await fetch(base+path,{method:'HEAD'})).status,200);assert.equal((await store.candidate(owner,id)).reviewerDecisions,undefined);
   assert.equal((await fetch(base+path,{method:'POST',headers:{Origin:'https://other.test'}})).status,403);
   assert.equal((await fetch(base+path+'tampered',{method:'POST'})).status,404);
-  assert.equal((await store.candidate(owner,id)).manualDecision,undefined);
+  assert.equal((await store.candidate(owner,id)).reviewerDecisions,undefined);
   for(const origin of ['null','malformed-origin'])assert.equal((await fetch(base+path,{method:'POST',headers:{Origin:origin}})).status,403);
-  assert.equal((await store.candidate(owner,id)).manualDecision,undefined);
+  assert.equal((await store.candidate(owner,id)).reviewerDecisions,undefined);
   const script=await fetch(base+'/lark/decision-client.js');assert.equal(script.status,200);assert.match(await script.text(),/void save\(\)/);
-  const post=await fetch(base+path,{method:'POST',headers:{Accept:'application/json','X-Decision-Intent':'apply',Origin:'null','Content-Type':'application/json'},body:JSON.stringify({decision:'denied',total:100})});assert.equal(post.status,200);assert.deepEqual(await post.json(),{saved:true,decision:'accept'});
-  const saved=await store.candidate(owner,id);assert.equal(saved.manualDecision,'accept');assert.equal(saved.total,25);assert.equal(saved.state,'complete');
-  await fetch(base+path,{method:'POST'});assert.equal((await store.candidate(owner,id)).decisionAt,saved.decisionAt);
+  const post=await fetch(base+path,{method:'POST',headers:{Accept:'application/json','X-Decision-Intent':'apply',Origin:'null','Content-Type':'application/json'},body:JSON.stringify({decision:'denied',total:100,receiver:'ou_4eb96bd84a22b6511fcb316d35ded621',name:'invented'})});assert.equal(post.status,200);assert.deepEqual(await post.json(),{saved:true,decision:'accept'});
+  const saved=await store.candidate(owner,id);assert.equal(saved.reviewerDecisions[LARK_RECIPIENTS[0]].decision,'accept');assert.equal(saved.reviewerDecisions[LARK_RECIPIENTS[0]].name,'Minh Quân');assert.equal(saved.total,25);assert.equal(saved.state,'complete');
+  await fetch(base+path,{method:'POST'});assert.deepEqual((await store.candidate(owner,id)).reviewerDecisions,saved.reviewerDecisions);
   await store.removeCandidates([{scope:owner,ids:[id]}]);assert.equal((await fetch(base+path,{method:'POST'})).status,404);assert.equal((await fetch(base+path)).status,404);
  }finally{if(child.exitCode===null){const exit=once(child,'exit');child.kill('SIGTERM');await exit;}await store.close();await rm(directory,{recursive:true,force:true});}
 });
