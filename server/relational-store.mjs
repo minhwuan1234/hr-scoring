@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { RUBRIC } from './rubric.mjs';
 
-export const SCHEMA_VERSION = 'candidate-cv-files-v5';
+export const SCHEMA_VERSION = 'candidate-deletion-v6';
 export const emptyWorkspace = () => ({version:1,references:[],mappings:{},jobs:{}});
 const equal = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 const identity = ref => JSON.stringify([ref.id,ref.embeddingModel]);
@@ -28,10 +28,12 @@ export async function loadRelationalWorkspace(client,id,{syncLegacy=true}={}) {
   if(positions.rows.length){state.positions={};for(const {definition} of positions.rows)(state.positions[definition.id]??=[]).push(definition);}
   const candidates=await client.query('SELECT * FROM hr_scoring_candidates WHERE workspace_id=$1',[id]);
   state.candidates=Object.fromEntries(candidates.rows.map(row=>[row.job_id,candidateRow(row)]));
+  const deleted=await client.query('SELECT job_id,details FROM hr_scoring_deleted_candidates WHERE workspace_id=$1',[id]);
+  if(deleted.rows.length)state.deletedCandidates=Object.fromEntries(deleted.rows.map(row=>[row.job_id,row.details || {}]));
   const refs = await client.query('SELECT * FROM hr_scoring_references WHERE workspace_id=$1 ORDER BY sort_order,reference_id,embedding_model',[id]);
-  state.references = refs.rows.map(row=>({id:row.reference_id,dimension:row.dimension_id,band:row.band,cap:Number(row.cap),statement:row.context,vector:row.embedding,source:row.source,embeddingModel:row.embedding_model,...(row.approved_at ? {approvedAt:new Date(row.approved_at).toISOString()} : {})}));
+  state.references = refs.rows.map(row=>({id:row.reference_id,dimension:row.dimension_id,band:row.band,cap:Number(row.cap),statement:row.context,vector:row.embedding,source:row.source,...(row.source_job_id?{sourceJobId:row.source_job_id}:{}),embeddingModel:row.embedding_model,...(row.approved_at ? {approvedAt:new Date(row.approved_at).toISOString()} : {})}));
   const decisions = await client.query('SELECT * FROM hr_scoring_sentence_decisions WHERE workspace_id=$1 ORDER BY sentence_key',[id]);
-  for (const row of decisions.rows) state.mappings[row.sentence_key] = row.action === 'reject' ? {action:'reject'} : {action:'approve',dimension:row.dimension_id,referenceId:row.reference_id};
+  for (const row of decisions.rows) state.mappings[row.sentence_key] = row.action === 'reject' ? {action:'reject',...(row.source_job_id?{sourceJobId:row.source_job_id}:{})} : {action:'approve',dimension:row.dimension_id,referenceId:row.reference_id,...(row.source_job_id?{sourceJobId:row.source_job_id}:{})};
   const jobs = await client.query('SELECT * FROM hr_scoring_jobs WHERE workspace_id=$1 ORDER BY created_at_ms,job_id',[id]);
   for (const row of jobs.rows) {
     const job = {id:row.job_id,...(row.candidate_profile?{candidateProfile:row.candidate_profile}:{}),...(row.file_name?{fileName:row.file_name}:{}),createdAt:Number(row.created_at_ms),embeddingModel:row.embedding_model,referenceVersion:row.reference_version,evidence:[],...(row.scoring_unit ? {scoringUnit:row.scoring_unit} : {}),...(row.scoring_formula ? {scoringFormula:row.scoring_formula} : {}),...(row.position_snapshot ? {position:row.position_snapshot} : {})};
@@ -69,11 +71,26 @@ export async function writeRelationalWorkspace(client,id,state,previous=emptyWor
     await client.query('INSERT INTO hr_scoring_workspaces(workspace_id,version) VALUES($1,1) ON CONFLICT DO NOTHING',[scope]);
     await client.query('INSERT INTO hr_scoring_position_scopes(owner_workspace_id,position_id,position_version,scoring_workspace_id) VALUES($1,$2,$3,$4)',[id,position.id,position.version,scope]);
   }
+  const deleted=await client.query('SELECT job_id,details FROM hr_scoring_deleted_candidates WHERE workspace_id=$1',[id]);
+  if(deleted.rows.length||state.deletedCandidates||previous.deletedCandidates)state.deletedCandidates={...previous.deletedCandidates,...state.deletedCandidates,...Object.fromEntries(deleted.rows.map(row=>[row.job_id,row.details || {}]))};
+  for(const jobId of Object.keys(state.deletedCandidates || {})){
+    await client.query('INSERT INTO hr_scoring_deleted_candidates(workspace_id,job_id,details) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[id,jobId,JSON.stringify(state.deletedCandidates[jobId])]);
+    await client.query('DELETE FROM hr_scoring_jobs WHERE workspace_id=$1 AND job_id=$2',[id,jobId]);
+    await client.query('DELETE FROM hr_scoring_candidates WHERE workspace_id=$1 AND job_id=$2',[id,jobId]);
+  }
   state.candidates??=previous.candidates;
   archiveCandidates(state);
   for(const c of Object.values(state.candidates || {})){
     if(isDeepStrictEqual(c,previous.candidates?.[c.id]))continue;
     await client.query(`INSERT INTO hr_scoring_candidates(workspace_id,job_id,file_name,position_id,position_version,position_name,created_at_ms,updated_at_ms,result_state,total,pending_count,dimensions,candidate_name,phone,email,linkedin_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(workspace_id,job_id) DO UPDATE SET file_name=EXCLUDED.file_name,updated_at_ms=EXCLUDED.updated_at_ms,result_state=EXCLUDED.result_state,total=EXCLUDED.total,pending_count=EXCLUDED.pending_count,dimensions=EXCLUDED.dimensions,candidate_name=COALESCE(EXCLUDED.candidate_name,hr_scoring_candidates.candidate_name),phone=COALESCE(EXCLUDED.phone,hr_scoring_candidates.phone),email=COALESCE(EXCLUDED.email,hr_scoring_candidates.email),linkedin_url=COALESCE(EXCLUDED.linkedin_url,hr_scoring_candidates.linkedin_url)`,[id,c.id,c.fileName,c.positionId,c.positionVersion,c.positionName,c.createdAt,c.updatedAt,c.state,c.total,c.pendingCount,JSON.stringify(c.dimensions),c.candidateProfile?.name || null,c.candidateProfile?.phone || null,c.candidateProfile?.email || null,c.candidateProfile?.linkedinUrl || null]);
+  }
+  if(Object.keys(state.deletedCandidates || {}).length){
+    const tables=['hr_scoring_schema_backups'];if((await client.query("SELECT to_regclass('hr_scoring_test_data_archive') AS name")).rows[0]?.name)tables.push('hr_scoring_test_data_archive');
+    for(const table of tables)for(const [jobId,details] of Object.entries(state.deletedCandidates)){
+      await client.query(`UPDATE ${table} SET payload=(payload #- ARRAY['jobs',$2] #- ARRAY['candidates',$2]) WHERE workspace_id=$1`,[id,jobId]);
+      for(const key of details?.sentenceKeys || [])await client.query(`UPDATE ${table} SET payload=payload #- ARRAY['mappings',$2] WHERE workspace_id=$1`,[id,key]);
+      const refs=details?.referenceIds || [];if(refs.length)await client.query(`UPDATE ${table} SET payload=jsonb_set(payload,'{references}',COALESCE((SELECT jsonb_agg(r) FROM jsonb_array_elements(payload->'references') r WHERE NOT (r->>'id'=ANY($2::text[]))),'[]'::jsonb)) WHERE workspace_id=$1 AND jsonb_typeof(payload->'references')='array'`,[id,refs]);
+    }
   }
   const priorRefs=new Map(previous.references.map(ref=>[identity(ref),ref]));
   for(const [index,ref] of state.references.entries()) {
@@ -81,19 +98,19 @@ export async function writeRelationalWorkspace(client,id,state,previous=emptyWor
     const bandRow=(await client.query('SELECT floor,ceiling FROM hr_scoring_bands WHERE dimension_id=$1 AND band=$2',[ref.dimension,ref.band])).rows[0];
     if(!bandRow)throw new Error('Reference band not found.');
     const floor=Number(bandRow.floor),ceiling=Number(bandRow.ceiling);
-    await client.query(`INSERT INTO hr_scoring_references(workspace_id,reference_id,embedding_model,dimension_id,band,floor,band_ceiling,cap,context,embedding,source,approved_at,sort_order)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      ON CONFLICT(workspace_id,reference_id,embedding_model) DO UPDATE SET dimension_id=EXCLUDED.dimension_id,band=EXCLUDED.band,floor=EXCLUDED.floor,band_ceiling=EXCLUDED.band_ceiling,cap=EXCLUDED.cap,context=EXCLUDED.context,embedding=EXCLUDED.embedding,source=EXCLUDED.source,approved_at=EXCLUDED.approved_at,sort_order=EXCLUDED.sort_order`,
-      [id,ref.id,ref.embeddingModel,ref.dimension,ref.band,floor,ceiling,ref.cap,ref.statement,ref.vector,ref.source,ref.approvedAt || null,index]);
+    await client.query(`INSERT INTO hr_scoring_references(workspace_id,reference_id,embedding_model,dimension_id,band,floor,band_ceiling,cap,context,embedding,source,approved_at,sort_order,source_job_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      ON CONFLICT(workspace_id,reference_id,embedding_model) DO UPDATE SET dimension_id=EXCLUDED.dimension_id,band=EXCLUDED.band,floor=EXCLUDED.floor,band_ceiling=EXCLUDED.band_ceiling,cap=EXCLUDED.cap,context=EXCLUDED.context,embedding=EXCLUDED.embedding,source=EXCLUDED.source,approved_at=EXCLUDED.approved_at,sort_order=EXCLUDED.sort_order,source_job_id=EXCLUDED.source_job_id`,
+      [id,ref.id,ref.embeddingModel,ref.dimension,ref.band,floor,ceiling,ref.cap,ref.statement,ref.vector,ref.source,ref.approvedAt || null,index,ref.sourceJobId || null]);
   }
   for(const key of Object.keys(previous.mappings)) if(!state.mappings[key]) await client.query('DELETE FROM hr_scoring_sentence_decisions WHERE workspace_id=$1 AND sentence_key=$2',[id,key]);
   for(const [key,decision] of Object.entries(state.mappings)) {
     if(equal(decision,previous.mappings[key])) continue;
     const ref=decision.action === 'approve' ? state.references.find(ref=>ref.id === decision.referenceId) : null;
     if(decision.action === 'approve' && !ref) throw new Error('Approved sentence reference not found.');
-    await client.query(`INSERT INTO hr_scoring_sentence_decisions(workspace_id,sentence_key,action,dimension_id,reference_id,reference_model) VALUES($1,$2,$3,$4,$5,$6)
-      ON CONFLICT(workspace_id,sentence_key) DO UPDATE SET action=EXCLUDED.action,dimension_id=EXCLUDED.dimension_id,reference_id=EXCLUDED.reference_id,reference_model=EXCLUDED.reference_model,updated_at=NOW()`,
-      [id,key,decision.action,decision.action === 'approve' ? decision.dimension : null,ref?.id || null,ref?.embeddingModel || null]);
+    await client.query(`INSERT INTO hr_scoring_sentence_decisions(workspace_id,sentence_key,action,dimension_id,reference_id,reference_model,source_job_id) VALUES($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT(workspace_id,sentence_key) DO UPDATE SET action=EXCLUDED.action,dimension_id=EXCLUDED.dimension_id,reference_id=EXCLUDED.reference_id,reference_model=EXCLUDED.reference_model,source_job_id=EXCLUDED.source_job_id,updated_at=NOW()`,
+      [id,key,decision.action,decision.action === 'approve' ? decision.dimension : null,ref?.id || null,ref?.embeddingModel || null,decision.sourceJobId || null]);
   }
   for(const jobId of Object.keys(previous.jobs)) if(!state.jobs[jobId]) await client.query('DELETE FROM hr_scoring_jobs WHERE workspace_id=$1 AND job_id=$2',[id,jobId]);
   for(const job of Object.values(state.jobs)) {
@@ -130,6 +147,7 @@ export async function initializeRelationalSchema(client) {
   await client.query(await readFile(new URL('./schema/candidates.sql',import.meta.url),'utf8'));
   await client.query(await readFile(new URL('./schema/profiles.sql',import.meta.url),'utf8'));
   await client.query(await readFile(new URL('./schema/cv-files.sql',import.meta.url),'utf8'));
+  await client.query(await readFile(new URL('./schema/candidate-deletion.sql',import.meta.url),'utf8'));
   const applied=await client.query('SELECT schema_version FROM hr_scoring_schema_migrations WHERE schema_version=$1',[SCHEMA_VERSION]);
   if(applied.rows.length) return;
   await client.query('LOCK TABLE hr_scoring_workspace_state IN ACCESS EXCLUSIVE MODE');

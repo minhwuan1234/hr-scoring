@@ -1,9 +1,10 @@
 # PostgreSQL storage model
 
-Railway uses the `candidate-cv-files-v5` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
+Railway uses the `candidate-deletion-v6` schema. Local development without `DATABASE_URL` may still use JSON files. No scoring thresholds or formulas change in this migration.
 
 | Table | Records |
 | --- | --- |
+| `hr_scoring_deleted_candidates` | Anonymous record IDs and cleanup keys that prevent deleted data being restored. |
 | `hr_scoring_candidate_files` | Original PDF bytes, linked to durable candidate history and isolated by workspace. |
 | `hr_scoring_candidates` | Durable CV metadata and original score summaries, independent of expiring jobs. |
 | `hr_scoring_positions` | Immutable template definitions, owner workspace, position ID and version. |
@@ -55,6 +56,16 @@ After scoring, the browser uploads the corresponding original PDF through `POST 
 `GET` on the same endpoint requires the browser workspace capability and checks role/version ownership. Responses use `application/pdf`, `nosniff`, and `Cache-Control: no-store`. The UI fetches the authenticated PDF into a temporary browser object URL, shows it in a preview popup and revokes the URL when closed. No capability token appears in the PDF URL. Both history and original PDF survive review-job expiry. Local development stores private PDF files under the configured data directory.
 
 The dashboard shows separate Phone, Email and CV columns. Candidate filename subtitles and visible template version labels are removed. Missing historical PDF originals display a dash; they cannot be reconstructed from stored scores.
+
+## Candidate deletion
+
+`POST /api/candidates/delete` accepts 1–1,000 unique `{id, positionId, positionVersion}` selections. All role versions are resolved through workspace ownership before mutation. PostgreSQL acquires the affected workspace locks in sorted order and deletes in one transaction; a failure rolls back the entire selection.
+
+Deletion removes history/contact metadata and review jobs; foreign keys cascade to original PDFs, evidence and dimension scores. Exclusive sentence decisions and human references attributable to the deleted CV are removed. Newly approved references/decisions carry `source_job_id` provenance, allowing cleanup after review jobs expire. Shared generic standards still required by another candidate remain until their last dependent CV is removed; configured position rubrics are retained.
+
+Records are scrubbed from `hr_scoring_workspace_state`, `hr_scoring_schema_backups` and the internal historical test-data archive. Minimal deletion markers retain IDs and cleanup hashes/reference IDs, without names, contact data or CV contents. Imports apply these markers before writing, preventing resurrection by stale replicas. These operations cover application-managed data, not the hosting provider’s independent backup-retention service.
+
+The client removes deleted results from mounted scoring queues and browser session caches, broadcasts deletion between tabs and closes open previews to revoke their object URLs. The UI keeps the existing polling interval while replacing the visible live-update label with the deletion action.
 
 ## Constraints
 

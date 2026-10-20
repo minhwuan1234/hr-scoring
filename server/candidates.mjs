@@ -5,6 +5,12 @@ import {DEFAULT_POSITION,positionScope} from './positions.mjs';
 // Keep lightweight score snapshots independently of expiring review jobs.
 export function archiveCandidates(state){
  state.candidates??={};
+ for(const [id,details] of Object.entries(state.deletedCandidates || {})){
+  delete state.jobs?.[id];delete state.candidates[id];
+  for(const key of details?.sentenceKeys || [])delete state.mappings[key];
+  const refs=new Set(details?.referenceIds || []);state.references=state.references.filter(r=>!refs.has(r.id));
+ }
+ for(const m of Object.values(state.mappings))if(state.deletedCandidates?.[m.sourceJobId])delete m.sourceJobId;
  for(const job of Object.values(state.jobs || {})){
   if(!job.result || !Array.isArray(job.result.dimensions))continue;
   const p=job.position || DEFAULT_POSITION,old=state.candidates[job.id];

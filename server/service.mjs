@@ -105,11 +105,11 @@ export function createScoringService(store, provider = { embed, extractEvidence,
         if (decision.action === 'approve') {
           item.dimension = decision.dimension;
           item.band = decision.band;
-          const ref = { id:randomUUID(), dimension:decision.dimension, band:decision.band, cap:decision.cap, statement:decision.statement.trim(), vector:vectors[approved.indexOf(decision)], embeddingModel, source:'human', approvedAt:new Date().toISOString() };
+          const ref = { id:randomUUID(), dimension:decision.dimension, band:decision.band, cap:decision.cap, statement:decision.statement.trim(), vector:vectors[approved.indexOf(decision)], embeddingModel, source:'human', sourceJobId:job.id, approvedAt:new Date().toISOString() };
           state.references.push(ref);
           item.referenceId = ref.id;
-          state.mappings[item.key] = { action:'approve', dimension:decision.dimension, referenceId:ref.id };
-        } else state.mappings[item.key] = { action:'reject' };
+          state.mappings[item.key] = { action:'approve',sourceJobId:job.id, dimension:decision.dimension, referenceId:ref.id };
+        } else state.mappings[item.key] = { action:'reject',sourceJobId:job.id };
       }
       state.version++;
       job.referenceVersion = state.version;

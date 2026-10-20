@@ -1,4 +1,4 @@
-import {CandidateHistory,notifyCandidatesChanged,type HistoryData} from './CandidateHistory';
+import {CandidateHistory,notifyCandidatesChanged,wasCandidateDeleted,type HistoryData} from './CandidateHistory';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, X } from 'lucide-react';
 import { pdfError } from './pdf';
@@ -46,7 +46,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     mounted.current = true;
     try { sessionStorage.removeItem('hr-scoring-jobs-v1'); } catch { /* Keep working if browser storage is unavailable. */ }
     for (const item of restoreCurrent()) {
-      void scoringRequest<ScoreResult>(`/api/jobs/${item.result!.id}?positionId=${encodeURIComponent(position.id)}&positionVersion=${position.version}`).then(result => patch(item.id,{result,stage:result.state})).catch(error => patch(item.id,{stage:'error',error:message(error)}));
+      void scoringRequest<ScoreResult>(`/api/jobs/${item.result!.id}?positionId=${encodeURIComponent(position.id)}&positionVersion=${position.version}`).then(result => patch(item.id,{result,stage:result.state})).catch(error => {if(error?.status===404)setCandidates(current=>current.filter(c=>c.id!==item.id));else patch(item.id,{stage:'error',error:message(error)});});
     }
     return () => { mounted.current = false; };
   }, []);
@@ -54,6 +54,8 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     try { sessionStorage.setItem(sessionKey,JSON.stringify(candidates.filter(item => item.result).map(({id,name,stage,result}) => ({id,name,stage,result})))); } catch { /* The active page still works if browser storage is full. */ }
   }, [candidates]);
 
+  useEffect(()=>{const deleted=(event:Event)=>{const items=(event as CustomEvent<{id:string;positionId:string;positionVersion:number}[]>).detail.filter(c=>c.positionId===position.id&&c.positionVersion===position.version);if(!items.length)return;const ids=new Set(items.map(c=>c.id));setCandidates(current=>current.filter(c=>!c.result||!ids.has(c.result.id)));setReviewId(null);};window.addEventListener('candidates-deleted',deleted);return()=>window.removeEventListener('candidates-deleted',deleted);},[position.id,position.version]);
+  useEffect(()=>{if(selectedId&&!candidates.some(c=>c.id===selectedId))setSelectedId(candidates[0]?.id || null);},[candidates,selectedId]);
   useEffect(()=>{if(active)onBusyChange(busy||reviewBusy);},[active,busy,reviewBusy,onBusyChange]);
 
   function addFiles(files: File[]) {
@@ -79,6 +81,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
         try {
           const text = await readCv(candidate.file!);
           const result = await scoringRequest<ScoreResult>('/api/score',{text,fileName:candidate.name,positionId:position.id,positionVersion:position.version});
+          if(wasCandidateDeleted(result.id)){setCandidates(current=>current.filter(c=>c.id!==candidate.id));continue;}
           patch(candidate.id,{result,stage:result.state});
           try{await candidateCvRequest(result.id,position.id,position.version,candidate.file);patch(candidate.id,{cvUploadFailed:false});}catch{patch(candidate.id,{cvUploadFailed:true});setErrors(current=>[...current,'Score saved, but the original CV could not be saved. Retry the CV upload below.']);}
           notifyCandidatesChanged();
@@ -93,6 +96,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     setReviewBusy(true); setReviewError('');
     try {
       const result = await scoringRequest<ScoreResult>(`/api/jobs/${reviewing.result.id}/review`,{decisions:[decision],positionId:position.id,positionVersion:position.version});
+      if(wasCandidateDeleted(result.id)){setCandidates(current=>current.filter(c=>c.id!==reviewing.id));setReviewId(null);return;}
       patch(reviewing.id,{result,stage:result.state});
       notifyCandidatesChanged();
       if (result.state === 'complete') setReviewId(null);

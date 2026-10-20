@@ -26,6 +26,12 @@ During the existing Luna CV-reading request, the model also extracts the applica
 
 Candidate contact metadata, filename, role/version, timestamps, review status and score breakdown are saved independently of review jobs in PostgreSQL. Clearing the upload queue does not remove history, and job expiry/retention does not erase saved scores. Each scoring run is a separate record; filenames do not establish a unique candidate identity. Existing retained jobs are migrated into history; older jobs have a fallback filename when it was never stored. Historical entries without a contact profile require re-uploading/scoring their CV, because complete CV text/PDFs were never archived. Newly scored CVs also save the original PDF for **View CV** and download. Missing legacy originals show a dash until the CV is uploaded again. Complete extracted CV text is not archived.
 
+## Delete selected CVs
+
+Select rows with their checkboxes or use the header checkbox to select the current filtered list. **Delete selected** replaces the former live-update text; automatic refresh continues. A confirmation popup lists exactly which CVs will be permanently deleted. Cancelling leaves them unchanged.
+
+Deletion removes candidate profiles/contact data, original PDFs, jobs, extracted evidence, score breakdowns and associated browser result caches. Candidate-specific learning decisions and unshared human references are removed; configured role templates and standards still used by other CVs remain intact. Application-managed migration backups and compatibility snapshots are scrubbed for the selected records. Non-personal deletion markers prevent older replicas or snapshots from restoring them. PostgreSQL deletion across selected roles is one transaction.
+
 ## Local development
 
 Requires Node.js 22.13+ (Node.js 24 recommended).

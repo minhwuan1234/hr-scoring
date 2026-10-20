@@ -1,3 +1,4 @@
+import {deleteCandidates} from './candidate-deletion.mjs';
 import {createPositionRouter} from './position-router.mjs';
 import { LUNA_MODEL } from './openai.mjs';
 import { SCORING_FORMULA } from './engine.mjs';
@@ -57,6 +58,7 @@ const server = createServer(async (request,response) => {
         const chunks=[];let length=0;for await(const chunk of request){length+=chunk.length;if(length>20*1024*1024)return json(response,413,{error:'Choose a PDF up to 20 MB.'});chunks.push(chunk);}
         await store.cvFiles.save(scope,path.split('/')[3],Buffer.concat(chunks));return json(response,200,{cvAvailable:true});
       }
+      if(path==='/api/candidates/delete')return json(response,200,await deleteCandidates(store,positions,workspace,(await body(request)).candidates));
       if(path==='/api/positions')return json(response,201,await positions.create(workspace,await body(request)));
       if(/^\/api\/positions\/[^/]+$/.test(path))return json(response,200,await positions.update(workspace,decodeURIComponent(path.split('/')[3]),await body(request)));
       if (!process.env.OPEN_AI_API_KEY) return json(response,503,{error:'Scoring is not configured yet. Add OPEN_AI_API_KEY on Railway.'});
