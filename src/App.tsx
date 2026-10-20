@@ -7,8 +7,8 @@ import {positionKey,type PositionTemplate,type PositionDraft} from './positions'
 import './positions.css';
 import Dashboard,{useCandidateHistory} from './CandidateHistory';
 export default function App(){
- const history=useCandidateHistory();
  const [positions,setPositions]=useState<PositionTemplate[]>([]),[selectedId,setSelectedId]=useState(()=>{try{return localStorage.getItem('hr-scoring-selected-position')||'hr-intern';}catch{return 'hr-intern';}});
+ const history=useCandidateHistory(selectedId==='dashboard'?'':selectedId);
  const [opened,setOpened]=useState<Record<string,PositionTemplate>>({});
  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
  const [setup,setSetup]=useState<{mode:'create'|'edit'|'duplicate';initial?:PositionTemplate}|null>(null);

@@ -1,3 +1,4 @@
+import {candidateQuery,fileCandidatePage,postgresCandidatePage} from './candidate-pages.mjs';
 import {readPositionCatalog,persistPositionCatalog} from './position-store.mjs';
 import {readPublicJob} from './job-reader.mjs';
 import {createCvFiles} from './cv-files.mjs';
@@ -87,9 +88,11 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const state=await loadRelationalWorkspace(client,id,{syncLegacy:false,scoringOnly:true,jobId,embeddingModel,mappingKeys});await client.query('COMMIT');return state;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
   async function readJob(workspace,id){if(!pool){const state=await readFileState(workspace);archiveCandidates(state);return state.jobs[id];}await initialize();return readPublicJob(pool,workspace,id);}
-  async function candidates(owner){
-    if(!pool)return fileCandidates({update},owner);
+  async function candidatePage(owner,input){const query=candidateQuery(input);if(!pool)return fileCandidatePage(await fileCandidates({update},owner),query,owner);await initialize();return postgresCandidatePage(pool,owner,query);}
+  async function candidates(owner,selection){
+    if(!pool){const rows=await fileCandidates({update},owner);if(!selection)return rows;const keys=new Set(selection.map(c=>JSON.stringify([c.positionId,c.positionVersion,c.id])));return rows.filter(c=>keys.has(JSON.stringify([c.positionId,c.positionVersion,c.id])));}
     await initialize();
+    if(selection){const requested=selection.map(c=>({job_id:c.id,position_id:c.positionId,position_version:c.positionVersion}));const {rows}=await pool.query(`WITH owned AS (SELECT $1::text AS workspace_id UNION SELECT scoring_workspace_id FROM hr_scoring_position_scopes WHERE owner_workspace_id=$1) SELECT c.* FROM hr_scoring_candidates c JOIN owned USING(workspace_id) JOIN jsonb_to_recordset($2::jsonb) AS s(job_id text,position_id text,position_version integer) USING(job_id,position_id,position_version) ORDER BY c.created_at_ms DESC,c.job_id`,[owner,JSON.stringify(requested)]);return rows.map(candidateRow);}
     const {rows}=await pool.query(`SELECT c.* FROM hr_scoring_candidates c WHERE c.workspace_id=$1 OR c.workspace_id IN (SELECT scoring_workspace_id FROM hr_scoring_position_scopes WHERE owner_workspace_id=$1) ORDER BY c.created_at_ms DESC,c.job_id`,[owner]);
     return rows.map(candidateRow);
   }
@@ -119,5 +122,5 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     }
   }
   const cvFiles=createCvFiles({pool,directory,initialize,update});
-  return { update, initialize, positions, position, changePositions, readScoring, readJob, candidates, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  return { update, initialize, positions, position, changePositions, readScoring, readJob, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

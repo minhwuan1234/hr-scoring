@@ -25,12 +25,12 @@ function workspaceToken() {
   return token;
 }
 
-export async function scoringRequest<T>(path: string, payload?: unknown, timeoutMs = 420000): Promise<T> {
+export async function scoringRequest<T>(path: string, payload?: unknown, timeoutMs = 420000, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, {
     method: payload === undefined ? 'GET' : 'POST',
     headers: { 'Content-Type':'application/json', 'X-Workspace-Token':workspaceToken() },
     ...(payload === undefined ? {} : { body:JSON.stringify(payload) }),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs),
   });
   const data = await response.json().catch(() => ({error:'Scoring is unavailable. Please try again shortly.'}));
   if (!response.ok) {

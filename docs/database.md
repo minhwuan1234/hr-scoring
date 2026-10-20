@@ -101,3 +101,10 @@ Scoring takes a short, read-only PostgreSQL snapshot of references in the active
 Existing reference vectors are reused after a server restart, avoiding another seed-embedding request for an initialized model space. Deletion cleanup runs for new deletion markers or reintroduced records, rather than scrubbing backups on every ordinary write. Persistent deletion markers still protect against stale compatibility imports.
 
 This optimization leaves the schema and scoring formula unchanged. `/api/status` reports `performanceVersion: isolated-io-v1` for deployment verification.
+
+
+## Candidate pagination
+
+`GET /api/candidates/page` validates page/search/position/outcome filters and always returns a page size of ten. One PostgreSQL statement resolves the owner's root and registered role workspaces, computes filtered totals, clamps the page, selects ten rows, and aggregates lightweight scope-wide outcome/role counts. Only the limited page serializes candidate profiles and criterion snapshots. Search applies to all scoped candidates; `%` and `_` are literal characters. Ordering uses `(created_at_ms DESC, job_id, workspace_id)` so tied timestamps remain stable.
+
+`candidate-pages.sql` adds covering indexes on `(workspace_id, created_at_ms DESC, job_id)` and `(workspace_id, position_id, created_at_ms DESC, job_id)`, including status/score metadata. These indexes are idempotent additions applied during initialization; they do not change `candidate-deletion-v6`, trigger legacy re-import, reset records or alter scoring. Candidate selection for Lark uses an ownership-checked join against the requested IDs, role IDs and versions instead of loading the whole archive. The previous array endpoint remains available for rollout compatibility.

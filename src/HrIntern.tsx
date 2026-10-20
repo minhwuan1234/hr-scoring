@@ -120,7 +120,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>{position.name}</strong></div></header>
     <div className="content scoring-content">
       <div className="page-heading"><div><h1>{position.name}<span className="title-dot">.</span></h1>{position.description&&<p>{position.description}</p>}</div></div>
-      <div className="workspace-tabs" role="tablist" aria-label="Position views"><button role="tab" aria-selected={view==='screening'} disabled={busy||reviewBusy} onClick={()=>setView('screening')}>Screening</button><button role="tab" aria-selected={view==='history'} disabled={busy||reviewBusy} onClick={()=>setView('history')}>History <span className="count-badge">{history.rows.filter(c=>c.positionId===position.id).length}</span></button></div>
+      <div className="workspace-tabs" role="tablist" aria-label="Position views"><button role="tab" aria-selected={view==='screening'} disabled={busy||reviewBusy} onClick={()=>setView('screening')}>Screening</button><button role="tab" aria-selected={view==='history'} disabled={busy||reviewBusy} onClick={()=>setView('history')}>History <span className="count-badge">{history.positionCounts[position.id] || 0}</span></button></div>
       <div hidden={view!=='screening'}>
       <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
       {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
@@ -141,7 +141,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
         </div>
       </section>
       </div>
-      {view==='history'&&<CandidateHistory data={history} positionId={position.id}/>}
+      {view==='history'&&active&&<CandidateHistory data={history} positionId={position.id}/>}
     </div>
     {evidence && <ReviewDialog key={evidence.id} position={position} evidence={evidence} remaining={reviewing!.result!.pending.length} busy={reviewBusy} error={reviewError} onDecision={decision => void decide(decision)} onClose={() => {setReviewId(null);setReviewError('');}} />}
   </>;

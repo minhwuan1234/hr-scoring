@@ -142,6 +142,7 @@ export async function initializeRelationalSchema(client) {
   await client.query(await readFile(new URL('./schema/profiles.sql',import.meta.url),'utf8'));
   await client.query(await readFile(new URL('./schema/cv-files.sql',import.meta.url),'utf8'));
   await client.query(await readFile(new URL('./schema/candidate-deletion.sql',import.meta.url),'utf8'));
+  await client.query(await readFile(new URL('./schema/candidate-pages.sql',import.meta.url),'utf8'));
   const applied=await client.query('SELECT schema_version FROM hr_scoring_schema_migrations WHERE schema_version=$1',[SCHEMA_VERSION]);
   if(applied.rows.length) return;
   await client.query('LOCK TABLE hr_scoring_workspace_state IN ACCESS EXCLUSIVE MODE');

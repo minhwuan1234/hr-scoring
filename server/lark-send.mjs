@@ -9,7 +9,7 @@ export async function sendCandidatesToLark(store,lark,owner,payload,links=create
  if(!payload||typeof payload.requestId!=='string'||!/^[a-f0-9-]{36}$/.test(payload.requestId))throw Object.assign(new Error('Provide a valid Lark send request ID.'),{status:400});
  const items=validateSelection(payload.candidates);if(items.length>50)throw Object.assign(new Error('Send up to 50 CVs at a time.'),{status:400});
  // Ignore client-supplied contact details/scores/receivers. Read owned saved records.
- const rows=new Map((await store.candidates(owner)).map(c=>[key(c),c]));
+ const rows=new Map((await store.candidates(owner,items)).map(c=>[key(c),c]));
  const records=items.map(item=>{const row=rows.get(key(item));if(!row)throw Object.assign(new Error('A selected CV is no longer available. Refresh the list and try again.'),{status:404});return row;});
  for(const row of records)if(!row.cvAvailable)throw Object.assign(new Error('The original PDF is missing for a selected CV. Upload and score the file again before sending.'),{status:404});
  const cards=records.map(row=>candidateCard(row,links.url(positionScope(owner,{id:row.positionId,version:row.positionVersion}),row.id)));

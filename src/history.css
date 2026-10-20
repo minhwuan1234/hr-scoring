@@ -19,3 +19,5 @@
 .lark-send-body>.lark-cv-field:first-child{margin-top:0}.button.send-lark,.button.lark-send-confirm{background:#25814e;border-color:#1e6d40;color:#fff}.button.send-lark:hover:not(:disabled),.button.lark-send-confirm:hover:not(:disabled){background:#1e6d40;border-color:#185a35}
 
 .button.send-lark,.button.delete-selected{font-size:12px}.button.delete-selected{background:#c44139;border-color:#ad332d;color:#fff}.button.delete-selected:hover:not(:disabled){background:#ad332d;border-color:#922b25}
+
+.history-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;color:#87857d;font-size:12px}.history-pagination>div{display:flex;align-items:center;gap:12px}.history-pagination>div>span{white-space:nowrap}.history-pagination .button{font-size:11px}@media(max-width:600px){.history-pagination{align-items:flex-start;flex-direction:column;gap:10px}.history-pagination>div{width:100%;justify-content:space-between}}
