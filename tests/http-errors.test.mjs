@@ -31,3 +31,24 @@ test('HTTP scoring failure exposes a traceable 502 and private-safe stage diagno
   const exit=once(child,'exit');child.kill('SIGTERM');await exit;await rm(directory,{recursive:true,force:true});
  }
 });
+
+test('shared CV URL opens only its signed PDF without a workspace token and stops working after deletion',async()=>{
+ const {createStore}=await import('../server/store.mjs');
+ const {createCvLinks}=await import('../server/cv-links.mjs');
+ const socket=createServer();socket.listen(0,'127.0.0.1');await once(socket,'listening');const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
+ const directory=await mkdtemp(join(tmpdir(),'hr-shared-cv-')),owner='c'.repeat(64),id='synthetic-shared-cv';
+ const store=createStore({databaseUrl:null,directory});
+ await store.update(owner,state=>{state.candidates??={};state.candidates[id]={id,fileName:'Synthetic CV.pdf',positionId:'hr-intern',positionVersion:1,positionName:'HR Intern',createdAt:Date.now(),updatedAt:Date.now(),state:'complete',total:70,pendingCount:0,dimensions:[],cvAvailable:false};});
+ const bytes=Buffer.from('%PDF-1.7\nSynthetic shared original\n%%EOF');await store.cvFiles.save(owner,id,bytes);
+ const links=createCvLinks({env:{CV_LINK_SECRET:'synthetic-share-secret'}}),path=new URL(links.url(owner,id)).pathname;
+ const child=spawn(process.execPath,['server/http.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,DATABASE_URL:'',RAILWAY_PROJECT_ID:'',SCORING_DATA_DIR:directory,CV_LINK_SECRET:'synthetic-share-secret',PORT:String(port)},stdio:['ignore','pipe','pipe']});
+ try{
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Synthetic server did not start.')),10000);child.stdout.on('data',chunk=>{if(chunk.toString().includes('server ready')){clearTimeout(timer);resolve();}});child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',()=>{clearTimeout(timer);reject(new Error('Synthetic server exited early.'));});});
+  const base=`http://127.0.0.1:${port}`;
+  const response=await fetch(base+path);assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/pdf');assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(response.headers.get('referrer-policy'),'no-referrer');assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+  const head=await fetch(base+path,{method:'HEAD'});assert.equal(head.status,200);assert.equal((await head.arrayBuffer()).byteLength,0);
+  assert.equal((await fetch(`${base}/api/jobs/${id}/cv`)).status,401);
+  assert.equal((await fetch(base+path.replace('v1.','v2.'))).status,404);
+  await store.removeCandidates([{scope:owner,ids:[id]}]);assert.equal((await fetch(base+path)).status,404);
+ }finally{if(child.exitCode===null){const exit=once(child,'exit');child.kill('SIGTERM');await exit;}await store.close();await rm(directory,{recursive:true,force:true});}
+});

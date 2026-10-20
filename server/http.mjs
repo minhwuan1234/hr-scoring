@@ -1,3 +1,4 @@
+import {createCvLinks} from './cv-links.mjs';
 import {sendCandidatesToLark} from './lark-send.mjs';
 import {createLarkClient} from './lark.mjs';
 import {randomUUID} from 'node:crypto';
@@ -18,6 +19,7 @@ const dist = resolve(fileURLToPath(new URL('../dist',import.meta.url)));
 const store = createStore();
 const {positions,scorer} = createPositionRouter(store);
 const lark=createLarkClient();
+const cvLinks=createCvLinks();
 const rateLimits = new Map();
 let active = 0;
 
@@ -37,6 +39,12 @@ const server = createServer(async (request,response) => {
   try {
     const requestUrl=new URL(request.url,'http://localhost');
     const path=requestUrl.pathname;
+    if((request.method==='GET'||request.method==='HEAD')&&path.startsWith('/api/shared-cvs/')){
+      const {scope,id}=cvLinks.verify(path.slice('/api/shared-cvs/'.length));
+      const {bytes,fileName}=await store.cvFiles.get(scope,id);
+      response.writeHead(200,{'Content-Type':'application/pdf','Content-Length':bytes.length,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"});
+      return response.end(request.method==='HEAD'?undefined:bytes);
+    }
     if (path === '/api/health') return json(response,200,{ok:true});
     if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
@@ -65,7 +73,7 @@ const server = createServer(async (request,response) => {
         const chunks=[];let length=0;for await(const chunk of request){length+=chunk.length;if(length>20*1024*1024)return json(response,413,{error:'Choose a PDF up to 20 MB.'});chunks.push(chunk);}
         await store.cvFiles.save(scope,path.split('/')[3],Buffer.concat(chunks));return json(response,200,{cvAvailable:true});
       }
-      if(path==='/api/lark/send'){const payload=await body(request);active++;try{const result=await sendCandidatesToLark(store,lark,workspace,payload);if(!result.complete)console.warn(JSON.stringify({event:'lark_partial_delivery',requestId,sentCount:result.sentCount,totalCount:result.totalCount,codes:[...new Set(result.failures.map(f=>f.code))]}));return json(response,200,result);}finally{active--;}}
+      if(path==='/api/lark/send'){const payload=await body(request);active++;try{const result=await sendCandidatesToLark(store,lark,workspace,payload,cvLinks);if(!result.complete)console.warn(JSON.stringify({event:'lark_partial_delivery',requestId,sentCount:result.sentCount,totalCount:result.totalCount,codes:[...new Set(result.failures.map(f=>f.code))]}));return json(response,200,result);}finally{active--;}}
       if(path==='/api/lark/check'){await body(request);return json(response,200,await lark.check());}
       if(path==='/api/candidates/delete')return json(response,200,await deleteCandidates(store,positions,workspace,(await body(request)).candidates));
       if(path==='/api/positions')return json(response,201,await positions.create(workspace,await body(request)));
