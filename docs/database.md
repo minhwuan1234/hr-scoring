@@ -90,3 +90,14 @@ Before importing each legacy workspace, an immutable copy is stored in `hr_scori
 ## Verification
 
 The test suite runs the actual schema, import and service flow in embedded PostgreSQL (PGlite), with fake AI providers. It verifies equal-cap contexts, multiple embedding spaces, pending and approved evidence, independent percentages, human review, repeated scoring, tenant constraints, retention, rolling-deployment compatibility, restart safety and transactional rollback on malformed data. Production continues using the Railway PostgreSQL service through `pg`.
+
+
+## Read and write separation
+
+Role lists and individual templates read only the position catalog. Opening a saved scoring result reads one job, its score breakdown and pending review sentences; it does not load reference vectors or other CVs. Dashboard/history reads continue to use candidate snapshots. These reads do not acquire scoring advisory locks.
+
+Scoring takes a short, read-only PostgreSQL snapshot of references in the active embedding model, relevant sentence decisions and, for review, the target job. Embedding and ceiling-assessment requests run after that connection is released. A short commit transaction then checks that the references, relevant decisions and target job still match the snapshot before saving. Concurrent changes trigger replanning, with at most three attempts; deletion or a competing review cannot be overwritten by a late model response. Provider failures leave the saved state unchanged.
+
+Existing reference vectors are reused after a server restart, avoiding another seed-embedding request for an initialized model space. Deletion cleanup runs for new deletion markers or reintroduced records, rather than scrubbing backups on every ordinary write. Persistent deletion markers still protect against stale compatibility imports.
+
+This optimization leaves the schema and scoring formula unchanged. `/api/status` reports `performanceVersion: isolated-io-v1` for deployment verification.

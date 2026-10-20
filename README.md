@@ -92,3 +92,6 @@ The one-time `clean-start-2026-10-19` migration moves existing workspace payload
 ## Structured PostgreSQL tables
 
 Railway stores dimensions, bands, individual reference examples, sentence decisions, jobs, evidence and dimension scores in separate tables. Each evidence row stores retrieval match and independently assessed ceiling fulfillment in separate columns. Multiple examples with the same cap remain distinct by reference ID/context. See `docs/database.md` for the schema, constraints, model-space isolation, migration backups and rolling-deployment compatibility. The prior JSONB workspace table is retained only as a compatibility mirror; application reads use the normalized tables.
+
+
+Role/template and saved-result reads are separate from scoring writes. Model requests run outside PostgreSQL transactions and advisory locks, so waiting for a model response does not block those reads. Short optimistic commits validate concurrent reviews and deletions before saving; see `docs/database.md` for details.

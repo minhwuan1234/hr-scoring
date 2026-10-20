@@ -28,9 +28,9 @@ export function validatePosition(input,{id=randomUUID(),version=1}={}){
  return template;
 }
 export function createPositionService(store){
- async function access(workspace,change){return store.update(workspace,state=>{state.positions??={};state.positions['hr-intern']??=[structuredClone(DEFAULT_POSITION)];return change(state.positions);});}
- async function list(workspace){return access(workspace,positions=>Object.values(positions).map(versions=>versions.at(-1)));}
- async function get(workspace,id='hr-intern',version){return access(workspace,positions=>{const versions=positions[id];const position=version===undefined?versions?.at(-1):versions?.find(p=>p.version===version);if(!position)throw Object.assign(new Error('Position template not found.'),{status:404});return position;});}
+ async function access(workspace,change){return store.changePositions(workspace,positions=>{positions['hr-intern']??=[structuredClone(DEFAULT_POSITION)];return change(positions);});}
+ async function list(workspace){let catalog=await store.positions(workspace);if(!catalog['hr-intern'])catalog=await access(workspace,positions=>positions);return Object.values(catalog).map(versions=>versions.at(-1));}
+ async function get(workspace,id='hr-intern',version){let p=await store.position(workspace,id,version);if(!p&&id==='hr-intern'&&(version===undefined||version===1)){await list(workspace);p=await store.position(workspace,id,version);}if(!p)throw Object.assign(new Error('Position template not found.'),{status:404});return p;}
  async function create(workspace,input){const position=validatePosition(input);return access(workspace,positions=>{if(Object.keys(positions).length>=100)throw invalid('Use up to 100 positions per workspace.');positions[position.id]=[position];return position;});}
  async function update(workspace,id,input){return access(workspace,positions=>{const versions=positions[id];if(!versions)throw Object.assign(new Error('Position template not found.'),{status:404});if(input.version!==versions.at(-1).version)throw Object.assign(new Error('This template changed. Reload it before saving.'),{status:409});const position=validatePosition(input,{id,version:input.version+1});versions.push(position);return position;});}
  return {list,get,create,update};

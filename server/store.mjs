@@ -1,3 +1,5 @@
+import {readPositionCatalog,persistPositionCatalog} from './position-store.mjs';
+import {readPublicJob} from './job-reader.mjs';
 import {createCvFiles} from './cv-files.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {archiveCandidates,fileCandidates,candidateRow} from './candidates.mjs';
@@ -60,6 +62,31 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     locks.set(id, next);
     try { return await next; } finally { if (locks.get(id) === next) locks.delete(id); }
   }
+  async function readFileState(id){try{return JSON.parse(await readFile(resolve(directory,`${id}.json`),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;return {version:1,references:[],mappings:{},jobs:{}};}}
+  async function positions(owner){if(!pool)return (await readFileState(owner)).positions || {};await initialize();return readPositionCatalog(pool,owner);}
+  async function position(owner,id,version){
+    if(!pool){const versions=(await positions(owner))[id];return version===undefined?versions?.at(-1):versions?.find(p=>p.version===version);}
+    await initialize();return (await pool.query(`SELECT definition FROM hr_scoring_positions WHERE workspace_id=$1 AND position_id=$2${version===undefined?'':' AND version=$3'} ORDER BY version DESC LIMIT 1`,version===undefined?[owner,id]:[owner,id,version])).rows[0]?.definition;
+  }
+  async function changePositions(owner,change){
+    if(!pool)return update(owner,state=>{state.positions??={};return change(state.positions);});
+    await initialize();const client=await pool.connect();
+    try{await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[owner]);
+      await client.query('INSERT INTO hr_scoring_workspaces(workspace_id,version) VALUES($1,1) ON CONFLICT DO NOTHING',[owner]);
+      const before=(await client.query('SELECT w.legacy_fingerprint,md5(s.payload::text) AS mirror_fingerprint FROM hr_scoring_workspaces w LEFT JOIN hr_scoring_workspace_state s USING(workspace_id) WHERE w.workspace_id=$1',[owner])).rows[0];
+      const catalog=await readPositionCatalog(client,owner),output=await change(catalog);
+      await persistPositionCatalog(client,owner,catalog);
+      await client.query(`INSERT INTO hr_scoring_workspace_state(workspace_id,payload) VALUES($1,jsonb_build_object('version',1,'references','[]'::jsonb,'mappings','{}'::jsonb,'jobs','{}'::jsonb,'positions',$2::jsonb)) ON CONFLICT(workspace_id) DO UPDATE SET payload=jsonb_set(hr_scoring_workspace_state.payload,'{positions}',$2::jsonb)`,[owner,JSON.stringify(catalog)]);
+      if(before.legacy_fingerprint===before.mirror_fingerprint)await client.query('UPDATE hr_scoring_workspaces SET legacy_fingerprint=(SELECT md5(payload::text) FROM hr_scoring_workspace_state WHERE workspace_id=$1) WHERE workspace_id=$1',[owner]);
+      await client.query('COMMIT');return output;
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }
+  async function readScoring(id,{jobId,embeddingModel,mappingKeys}={}){
+    if(!pool){const state=await readFileState(id);archiveCandidates(state);return state;}
+    await initialize();const client=await pool.connect();
+    try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const state=await loadRelationalWorkspace(client,id,{syncLegacy:false,scoringOnly:true,jobId,embeddingModel,mappingKeys});await client.query('COMMIT');return state;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }
+  async function readJob(workspace,id){if(!pool){const state=await readFileState(workspace);archiveCandidates(state);return state.jobs[id];}await initialize();return readPublicJob(pool,workspace,id);}
   async function candidates(owner){
     if(!pool)return fileCandidates({update},owner);
     await initialize();
@@ -92,5 +119,5 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     }
   }
   const cvFiles=createCvFiles({pool,directory,initialize,update});
-  return { update, initialize, candidates, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  return { update, initialize, positions, position, changePositions, readScoring, readJob, candidates, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }
