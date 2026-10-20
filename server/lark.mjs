@@ -3,7 +3,7 @@ const API='https://open.larksuite.com/open-apis';
 const failure=(message,status,code)=>Object.assign(new Error(message),{status,code,stage:'lark-auth'});
 // Secrets and tenant tokens stay in this server-only client.
 export function createLarkClient({env=process.env,fetcher=(...args)=>fetch(...args),now=Date.now}={}){
- const appId=(env.LARK_APP_ID||env.LARK_ID||'').trim(),appSecret=(env.LARK_APP_SECRET||env.LARK_SECRET||'').trim();
+ const appId=(env.LARK_APP_ID||env.LARK_APP_||env.LARK_ID||'').trim(),appSecret=(env.LARK_APP_SECRET||env.LARK_SECRET||'').trim();
  let cached,pending;
  function status(){return {configured:!!appId&&!!appSecret,missing:[...(!appId?['LARK_APP_ID']:[]),...(!appSecret?['LARK_APP_SECRET']:[])]};}
  async function token(){

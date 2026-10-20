@@ -108,7 +108,7 @@ If scoring fails, the UI displays an **Error ID** for 5xx responses. Match it to
 
 ### Lark sending
 
-Set `LARK_APP_ID` and `LARK_APP_SECRET` on the Railway **application service** (`LARK_ID` and `LARK_SECRET` are accepted aliases). Credentials stay server-side. `GET /api/lark/status` reports presence without values. `POST /api/lark/check` verifies the internal app and caches its tenant token until shortly before expiry. All Lark routes require the existing workspace header, and POST routes use the existing rate limit.
+Set `LARK_APP_ID` and `LARK_APP_SECRET` on the Railway **application service** (`LARK_APP_` or `LARK_ID` for the App ID and `LARK_SECRET` for the secret are accepted aliases). Credentials stay server-side. `GET /api/lark/status` reports presence without values. `POST /api/lark/check` verifies the internal app and caches its tenant token until shortly before expiry. All Lark routes require the existing workspace header, and POST routes use the existing rate limit.
 
 Select up to 50 CVs in Dashboard or role History and choose **Send Lark**. The popup lists the three user-confirmed Open IDs and requests a Google Drive CV URL for each selection. The application currently stores PDFs in PostgreSQL, so it cannot invent a Drive URL. Links must use HTTPS on `drive.google.com` or `docs.google.com`; recipients must already have access to the linked file. Original PDFs are not automatically uploaded or made public.
 

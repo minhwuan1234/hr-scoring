@@ -20,6 +20,7 @@ test('missing credentials fail without network calls; short environment variable
  assert.deepEqual(client.status(),{configured:false,missing:['LARK_APP_ID','LARK_APP_SECRET']});
  await assert.rejects(()=>client.check(),e=>e.status===503&&e.code==='LARK_NOT_CONFIGURED');
  const aliases=createLarkClient({env:{LARK_ID:'synthetic',LARK_SECRET:'synthetic'},fetcher:async()=>success()});assert.equal((await aliases.check()).connected,true);
+ const railway=createLarkClient({env:{LARK_APP_:'synthetic-railway-id',LARK_APP_SECRET:'synthetic-secret'},fetcher:async(url,options)=>{assert.equal(JSON.parse(options.body).app_id,'synthetic-railway-id');return success();}});assert.equal(railway.status().configured,true);assert.equal((await railway.check()).connected,true);
 });
 test('Lark failures are safe and failed authentication can be retried',async()=>{
  for(const response of [{ok:false,status:403},{ok:true,json:async()=>({code:10003,msg:'private-synthetic-token synthetic-secret'})},{ok:true,json:async()=>({code:0,expire:7200})},{ok:true,json:async()=>{throw new Error('synthetic-secret');}}]){
