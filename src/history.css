@@ -28,3 +28,5 @@
 .history-table .decision-counts{flex-wrap:nowrap}.history-table .history-file{min-width:110px}.history-table .history-email{min-width:150px}
 
 .vote-count-cell .outcome{min-width:36px;justify-content:center}.vote-count-cell .outcome:before{display:none}
+
+.reviewer-names{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:0;padding-top:16px;border-top:1px solid #e8e7e2}.reviewer-names dt{font-size:11px;color:#807e74;margin-bottom:6px}.reviewer-names dd{margin:0;font-size:12px;font-weight:500;line-height:1.6;overflow-wrap:anywhere}.reviewer-names .accepted-names{color:#25814e}.reviewer-names .rejected-names{color:#c44139}@media(max-width:380px){.reviewer-names{grid-template-columns:1fr;gap:12px}}
