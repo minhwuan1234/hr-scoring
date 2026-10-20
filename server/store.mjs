@@ -88,6 +88,11 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const state=await loadRelationalWorkspace(client,id,{syncLegacy:false,scoringOnly:true,jobId,embeddingModel,mappingKeys});await client.query('COMMIT');return state;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
   async function readJob(workspace,id){if(!pool){const state=await readFileState(workspace);archiveCandidates(state);return state.jobs[id];}await initialize();return readPublicJob(pool,workspace,id);}
+  async function candidate(scope,id){if(!pool)return (await readFileState(scope)).candidates?.[id];await initialize();const {rows}=await pool.query('SELECT * FROM hr_scoring_candidates WHERE workspace_id=$1 AND job_id=$2',[scope,id]);return rows[0]?candidateRow(rows[0]):undefined;}
+  async function decideCandidate(scope,id,decision){
+    if(!['accept','denied'].includes(decision))throw Object.assign(new Error('Choose Accept or Denied.'),{status:400});
+    return update(scope,state=>{const c=state.candidates?.[id];if(!c||state.deletedCandidates?.[id])throw Object.assign(new Error('This CV is no longer available.'),{status:404});if(c.manualDecision!==decision){c.manualDecision=decision;c.decisionAt=Date.now();c.updatedAt=c.decisionAt;}return structuredClone(c);});
+  }
   async function candidatePage(owner,input){const query=candidateQuery(input);if(!pool)return fileCandidatePage(await fileCandidates({update},owner),query,owner);await initialize();return postgresCandidatePage(pool,owner,query);}
   async function candidates(owner,selection){
     if(!pool){const rows=await fileCandidates({update},owner);if(!selection)return rows;const keys=new Set(selection.map(c=>JSON.stringify([c.positionId,c.positionVersion,c.id])));return rows.filter(c=>keys.has(JSON.stringify([c.positionId,c.positionVersion,c.id])));}
@@ -122,5 +127,5 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     }
   }
   const cvFiles=createCvFiles({pool,directory,initialize,update});
-  return { update, initialize, positions, position, changePositions, readScoring, readJob, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  return { update, initialize, positions, position, changePositions, readScoring, readJob, candidate, decideCandidate, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

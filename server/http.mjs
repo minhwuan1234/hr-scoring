@@ -1,3 +1,5 @@
+import {createDecisionLinks} from './decision-links.mjs';
+import {decisionPage,decisionHeaders} from './decision-page.mjs';
 import {createCvLinks} from './cv-links.mjs';
 import {sendCandidatesToLark} from './lark-send.mjs';
 import {createLarkClient} from './lark.mjs';
@@ -20,8 +22,18 @@ const store = createStore();
 const {positions,scorer} = createPositionRouter(store);
 const lark=createLarkClient();
 const cvLinks=createCvLinks();
+const decisionLinks=createDecisionLinks();
 const rateLimits = new Map();
 let active = 0;
+
+function checkWriteRate(request){
+  const ip = (process.env.RAILWAY_PROJECT_ID && request.headers['x-real-ip']) || request.socket.remoteAddress;
+  const now = Date.now();
+  if (rateLimits.size > 10000) for (const [key,item] of rateLimits) if (now > item.until) rateLimits.delete(key);
+  let limit = rateLimits.get(ip);
+  if (!limit || now > limit.until) { limit = {count:0,until:now+600000}; rateLimits.set(ip,limit); }
+  if (++limit.count > 200) throw Object.assign(new Error('Too many requests. Please retry in a few minutes.'),{status:429});
+}
 
 function json(response,status,data) {
   response.writeHead(status,{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff' });
@@ -45,8 +57,21 @@ const server = createServer(async (request,response) => {
       response.writeHead(200,{'Content-Type':'application/pdf','Content-Length':bytes.length,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"});
       return response.end(request.method==='HEAD'?undefined:bytes);
     }
+    if(path.startsWith('/lark/decision/')){
+      if(!['GET','HEAD','POST'].includes(request.method))return json(response,405,{error:'Method not allowed.'});
+      const {scope,id,decision}=decisionLinks.verify(path.slice('/lark/decision/'.length));
+      if(request.method==='POST'){
+        checkWriteRate(request);
+        const origin=request.headers.origin;
+        if(origin&&new URL(origin).host!==request.headers.host)return json(response,403,{error:'Cross-origin requests are not allowed.'});
+      }
+      const candidate=request.method==='POST'?await store.decideCandidate(scope,id,decision):await store.candidate(scope,id);
+      if(!candidate) return json(response,404,{error:'Candidate not found.'});
+      response.writeHead(200,decisionHeaders);
+      return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
+    }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-decisions-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
@@ -62,19 +87,15 @@ const server = createServer(async (request,response) => {
       if (request.method !== 'POST') return json(response,405,{error:'Method not allowed.'});
       const origin = request.headers.origin;
       if (origin && new URL(origin).host !== request.headers.host) return json(response,403,{error:'Cross-origin requests are not allowed.'});
-      const ip = (process.env.RAILWAY_PROJECT_ID && request.headers['x-real-ip']) || request.socket.remoteAddress;
-      const now = Date.now();
-      if (rateLimits.size > 10000) for (const [key,item] of rateLimits) if (now > item.until) rateLimits.delete(key);
-      let limit = rateLimits.get(ip);
-      if (!limit || now > limit.until) { limit = {count:0,until:now+600000}; rateLimits.set(ip,limit); }
-      if (++limit.count > 200 || active >= 3) return json(response,429,{error:'Too many scoring requests. Please retry in a few minutes.'});
+      checkWriteRate(request);
+      if(active>=3)return json(response,429,{error:'Too many scoring requests. Please retry in a few minutes.'});
       if(/^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
         if(request.headers['content-type']?.split(';')[0]!=='application/pdf')return json(response,415,{error:'Choose a PDF file.'});
         const {scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));
         const chunks=[];let length=0;for await(const chunk of request){length+=chunk.length;if(length>20*1024*1024)return json(response,413,{error:'Choose a PDF up to 20 MB.'});chunks.push(chunk);}
         await store.cvFiles.save(scope,path.split('/')[3],Buffer.concat(chunks));return json(response,200,{cvAvailable:true});
       }
-      if(path==='/api/lark/send'){const payload=await body(request);active++;try{const result=await sendCandidatesToLark(store,lark,workspace,payload,cvLinks);if(!result.complete)console.warn(JSON.stringify({event:'lark_partial_delivery',requestId,sentCount:result.sentCount,totalCount:result.totalCount,codes:[...new Set(result.failures.map(f=>f.code))]}));return json(response,200,result);}finally{active--;}}
+      if(path==='/api/lark/send'){const payload=await body(request);active++;try{const result=await sendCandidatesToLark(store,lark,workspace,payload,cvLinks,decisionLinks);if(!result.complete)console.warn(JSON.stringify({event:'lark_partial_delivery',requestId,sentCount:result.sentCount,totalCount:result.totalCount,codes:[...new Set(result.failures.map(f=>f.code))]}));return json(response,200,result);}finally{active--;}}
       if(path==='/api/lark/check'){await body(request);return json(response,200,await lark.check());}
       if(path==='/api/candidates/delete')return json(response,200,await deleteCandidates(store,positions,workspace,(await body(request)).candidates));
       if(path==='/api/positions')return json(response,201,await positions.create(workspace,await body(request)));

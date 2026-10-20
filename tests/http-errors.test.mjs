@@ -52,3 +52,27 @@ test('shared CV URL opens only its signed PDF without a workspace token and stop
   await store.removeCandidates([{scope:owner,ids:[id]}]);assert.equal((await fetch(base+path)).status,404);
  }finally{if(child.exitCode===null){const exit=once(child,'exit');child.kill('SIGTERM');await exit;}await store.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test('Lark decision links show a read-only confirmation and POST only the signed decision, independent of scoring',async()=>{
+ const {createStore}=await import('../server/store.mjs'),{createDecisionLinks}=await import('../server/decision-links.mjs'),{LARK_RECIPIENTS}=await import('../server/lark-config.mjs');
+ const socket=createServer();socket.listen(0,'127.0.0.1');await once(socket,'listening');const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
+ const directory=await mkdtemp(join(tmpdir(),'hr-http-decision-')),owner='e'.repeat(64),id='synthetic-decision';
+ const store=createStore({databaseUrl:null,directory});
+ const record={id,fileName:'Synthetic CV.pdf',positionId:'hr-intern',positionVersion:1,positionName:'HR Intern',createdAt:1000,updatedAt:1000,state:'complete',total:25,pendingCount:0,dimensions:[],cvAvailable:false};
+ await store.update(owner,state=>{state.candidates={[id]:record};});
+ const links=createDecisionLinks({env:{CV_LINK_SECRET:'synthetic-decision-secret'}}),path=new URL(links.url(owner,id,LARK_RECIPIENTS[0],'accept')).pathname;
+ const child=spawn(process.execPath,['server/http.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,DATABASE_URL:'',RAILWAY_PROJECT_ID:'',SCORING_DATA_DIR:directory,CV_LINK_SECRET:'synthetic-decision-secret',PORT:String(port)},stdio:['ignore','pipe','pipe']});
+ try{
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Synthetic server did not start.')),10000);child.stdout.on('data',chunk=>{if(chunk.toString().includes('server ready')){clearTimeout(timer);resolve();}});child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',()=>{clearTimeout(timer);reject(new Error('Synthetic server exited early.'));});});
+  const base=`http://127.0.0.1:${port}`;
+  const get=await fetch(base+path);assert.equal(get.status,200);assert.match(await get.text(),/Confirm candidate decision/);assert.equal(get.headers.get('referrer-policy'),'no-referrer');assert.equal(get.headers.get('cache-control'),'no-store');
+  assert.equal((await fetch(base+path,{method:'HEAD'})).status,200);assert.equal((await store.candidate(owner,id)).manualDecision,undefined);
+  assert.equal((await fetch(base+path,{method:'POST',headers:{Origin:'https://other.test'}})).status,403);
+  assert.equal((await fetch(base+path+'tampered',{method:'POST'})).status,404);
+  assert.equal((await store.candidate(owner,id)).manualDecision,undefined);
+  const post=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',Origin:base},body:'decision=denied&total=100'});assert.equal(post.status,200);assert.match(await post.text(),/Decision saved/);
+  const saved=await store.candidate(owner,id);assert.equal(saved.manualDecision,'accept');assert.equal(saved.total,25);assert.equal(saved.state,'complete');
+  await fetch(base+path,{method:'POST'});assert.equal((await store.candidate(owner,id)).decisionAt,saved.decisionAt);
+  await store.removeCandidates([{scope:owner,ids:[id]}]);assert.equal((await fetch(base+path,{method:'POST'})).status,404);assert.equal((await fetch(base+path)).status,404);
+ }finally{if(child.exitCode===null){const exit=once(child,'exit');child.kill('SIGTERM');await exit;}await store.close();await rm(directory,{recursive:true,force:true});}
+});

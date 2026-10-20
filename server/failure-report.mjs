@@ -3,6 +3,7 @@ function route(request){
  const path=new URL(request.url,'http://localhost').pathname;
  if(['/api/score','/api/candidates','/api/candidates/delete','/api/positions','/api/lark/check','/api/lark/send'].includes(path))return path;
  if(/^\/api\/jobs\/[^/]+(?:\/(?:review|cv))?$/.test(path))return path.replace(/(\/api\/jobs\/)[^/]+/,'$1:id');
+ if(path.startsWith('/lark/decision/'))return '/lark/decision/:token';
  if(path.startsWith('/api/positions/'))return '/api/positions/:id';
  return path.startsWith('/api/')?'/api/other':'/static';
 }
