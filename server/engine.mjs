@@ -1,3 +1,4 @@
+import {ModelOutputError} from './scoring-errors.mjs';
 import { RUBRIC, getBand } from './rubric.mjs';
 
 import { cvSentences, sentenceKey } from './sentences.mjs';
@@ -21,15 +22,15 @@ export function nearest(evidence, references, embeddingModel) {
 }
 
 export function validateEvidence(output, cvText, rubric = RUBRIC) {
-  if (!Array.isArray(output?.evidence) || output.evidence.length > 36) throw new Error('The model returned invalid evidence.');
+  if (!Array.isArray(output?.evidence) || output.evidence.length > 36) throw new ModelOutputError('The model returned invalid evidence. Please retry.','MODEL_EVIDENCE_INVALID');
   const sentences = new Map(cvSentences(cvText).map(sentence => [sentence.sentenceId,sentence]));
   const seen = new Set();
   return output.evidence.map(item => {
-    if (!item || ['sentenceId','statement','reason'].some(key => typeof item[key] !== 'string' || !item[key].trim() || item[key].length > 2500)) throw new Error('The model returned invalid sentence evidence.');
-    if (!Number.isInteger(item.band)) throw new Error('The model returned an invalid rubric band.');
-    getBand(item.dimension, item.band, rubric);
+    if (!item || ['sentenceId','statement','reason'].some(key => typeof item[key] !== 'string' || !item[key].trim() || item[key].length > 2500)) throw new ModelOutputError('The model returned invalid sentence evidence. Please retry.','MODEL_EVIDENCE_INVALID');
+    if (!Number.isInteger(item.band)) throw new ModelOutputError('The model returned an invalid rubric band. Please retry.','MODEL_BAND_INVALID');
+    try { getBand(item.dimension, item.band, rubric); } catch { throw new ModelOutputError('The model returned an invalid dimension or band. Please retry.','MODEL_BAND_INVALID'); }
     const sentence = sentences.get(item.sentenceId);
-    if (!sentence) throw new Error('A model evidence sentence could not be verified against the CV. Please retry.');
+    if (!sentence) throw new ModelOutputError('A model evidence sentence could not be verified against the CV. Please retry.','MODEL_SENTENCE_INVALID');
     // Only server-defined full sentences can be selected. Model fragments and
     // several proposed dimensions for one sentence collapse to the first item.
     return { sentenceId:sentence.sentenceId, quote:sentence.quote, key:sentence.key,

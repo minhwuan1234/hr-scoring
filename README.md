@@ -95,3 +95,12 @@ Railway stores dimensions, bands, individual reference examples, sentence decisi
 
 
 Role/template and saved-result reads are separate from scoring writes. Model requests run outside PostgreSQL transactions and advisory locks, so waiting for a model response does not block those reads. Short optimistic commits validate concurrent reviews and deletions before saving; see `docs/database.md` for details.
+
+
+### Scoring error recovery
+
+Evidence schemas restrict each criterion to its own valid band indices, including templates with different band counts. Invalid extracted sentences or ceiling assessments are regenerated once, then rejected with a specific 502 error if validation still fails. Invalid output never receives fallback scores or a saved scoring run.
+
+Provider connection failures and early upstream 5xx responses get one bounded retry; long `Retry-After` delays, quota/authentication errors and timeouts are surfaced rather than retried immediately. Provider requests share their original 120-second timeout across transport attempts. Recovery follows the [OpenAI error guidance](https://developers.openai.com/api/docs/guides/error-codes); the schema uses supported nested `anyOf` branches from [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+If scoring fails, the UI displays an **Error ID** for 5xx responses. Match it to Railway's JSON `request_failed` log entry: `stage` distinguishes extraction, embedding, assessment and database read/commit, while `code` identifies model validation, upstream HTTP or database errors. Logs contain safe metadata only, excluding CV text, contacts, SQL values, API keys and raw provider error bodies. `/api/status` reports `errorHandlingVersion: scoring-recovery-v1` on this release. This instrumentation identifies future failures; it does not establish the cause of an earlier untraced production error.

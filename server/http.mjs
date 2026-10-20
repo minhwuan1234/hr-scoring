@@ -1,3 +1,5 @@
+import {randomUUID} from 'node:crypto';
+import {failureReport} from './failure-report.mjs';
 import {deleteCandidates} from './candidate-deletion.mjs';
 import {createPositionRouter} from './position-router.mjs';
 import { LUNA_MODEL } from './openai.mjs';
@@ -28,11 +30,12 @@ async function body(request) {
 }
 
 const server = createServer(async (request,response) => {
+  const requestId=randomUUID(),started=Date.now();response.setHeader('X-Request-Id',requestId);
   try {
     const requestUrl=new URL(request.url,'http://localhost');
     const path=requestUrl.pathname;
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
@@ -80,11 +83,9 @@ const server = createServer(async (request,response) => {
     if (request.method === 'HEAD') return response.end();
     createReadStream(file).on('error',()=>response.destroy()).pipe(response);
   } catch (error) {
-    const status = error.status || (error.name === 'TimeoutError' ? 504 : 500);
-    // Log codes only; never log CV text, provider responses or API credentials.
-    if (status === 500) console.error('Scoring request failed:',error.code || error.name);
-    const message = status === 500 ? 'Scoring could not complete. Please retry or check server storage configuration.' : error.name === 'TimeoutError' ? 'Scoring timed out. Please retry.' : error.message;
-    if (!response.headersSent) json(response,status,{error:message});
+    const {status,data,log}=failureReport(error,request,requestId,Date.now()-started);
+    if(status>=500)console.error(JSON.stringify(log));
+    if (!response.headersSent) json(response,status,data);
     else response.destroy();
   }
 });

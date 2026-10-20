@@ -33,7 +33,10 @@ export async function scoringRequest<T>(path: string, payload?: unknown, timeout
     signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await response.json().catch(() => ({error:'Scoring is unavailable. Please try again shortly.'}));
-  if (!response.ok) throw Object.assign(new Error(data.error || 'Scoring could not complete. Please retry.'),{status:response.status});
+  if (!response.ok) {
+    const reference=response.status>=500&&typeof data.requestId==='string'&&/^[a-f0-9-]{36}$/.test(data.requestId)?` (Error ID: ${data.requestId})`:'';
+    throw Object.assign(new Error((data.error || 'Scoring could not complete. Please retry.')+reference),{status:response.status});
+  }
   return data as T;
 }
 

@@ -1,3 +1,4 @@
+import {ModelOutputError,stage,validatedModelCall} from './scoring-errors.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {validateProfile} from './profile.mjs';
 import {validateFileName} from './candidates.mjs';
@@ -20,7 +21,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
   async function initialReferences() {
     if (!baseline) baseline = (async () => {
       const records = rubric.flatMap(d => [...d.bands.map(([min,max,statement],band) => ({ id:`rubric-${d.id}-${band}`, dimension:d.id, band, cap:max, statement, source:'user-rubric', embeddingModel })),...(d.examples || []).map((example,index)=>({id:`example-${d.id}-${index}`,dimension:d.id,band:example.band,cap:example.cap,statement:example.statement,source:'user-rubric',embeddingModel}))]);
-      const vectors = await provider.embed(records.map(record => record.statement));
+      const vectors = await stage('reference-embedding',()=>provider.embed(records.map(record => record.statement)));
       return records.map((record,index) => ({ ...record, vector:vectors[index] }));
     })().catch(error => { baseline = undefined; throw error; });
     return baseline;
@@ -33,14 +34,17 @@ export function createScoringService(store, provider = { embed, extractEvidence,
       return {id:item.id,quote:item.quote,dimension:item.dimension,reference:{id:match.ref.id,statement:match.ref.statement,band:match.ref.band,cap:match.ref.cap}};
     });
     if (!pairs.length) return;
-    const assessments = await provider.assessCeilings(pairs,position);
-    if (!Array.isArray(assessments) || assessments.length !== pairs.length) throw Object.assign(new Error('The model returned incomplete ceiling assessments. Please retry.'), {status:502});
     const expected = new Map(pairs.map(pair => [pair.id,pair]));
-    const seen = new Set();
-    for (const assessment of assessments) {
-      if (!assessment || !expected.has(assessment.id) || seen.has(assessment.id) || !Number.isFinite(assessment.fulfillment) || assessment.fulfillment < 0 || assessment.fulfillment > 1 || typeof assessment.reason !== 'string' || !assessment.reason.trim() || assessment.reason.length > 2500) throw Object.assign(new Error('The model returned invalid ceiling assessments. Please retry.'), {status:502});
-      seen.add(assessment.id);
-    }
+    const assessments = await stage('ceiling-assessment',()=>validatedModelCall(async()=>{
+      const assessments = await provider.assessCeilings(pairs,position);
+      if (!Array.isArray(assessments) || assessments.length !== pairs.length) throw new ModelOutputError('The model returned incomplete ceiling assessments. Please retry.','MODEL_ASSESSMENT_INVALID');
+      const seen = new Set();
+      for (const assessment of assessments) {
+        if (!assessment || !expected.has(assessment.id) || seen.has(assessment.id) || !Number.isFinite(assessment.fulfillment) || assessment.fulfillment < 0 || assessment.fulfillment > 1 || typeof assessment.reason !== 'string' || !assessment.reason.trim() || assessment.reason.length > 2500) throw new ModelOutputError('The model returned invalid ceiling assessments. Please retry.','MODEL_ASSESSMENT_INVALID');
+        seen.add(assessment.id);
+      }
+      return assessments;
+    }));
     for (const assessment of assessments) {
       const item = job.evidence.find(item => item.id === assessment.id);
       item.assessment = {referenceId:expected.get(item.id).reference.id,fulfillment:assessment.fulfillment,reason:assessment.reason,model:LUNA_MODEL};
@@ -67,11 +71,14 @@ export function createScoringService(store, provider = { embed, extractEvidence,
   async function analyze(workspace,text,metadata={}){
     const fileName=validateFileName(metadata.fileName);
     if(typeof text!=='string'||text.trim().length<10||text.length>100000)throw Object.assign(new Error('Use a CV containing 10–100,000 characters of readable text.'),{status:400});
-    const extracted=await provider.extractEvidence(text,position),candidateProfile=validateProfile(extracted.candidateProfile,text),output=validateEvidence(extracted,text,rubric);
-    const vectors=await provider.embed(output.map(item=>item.statement));
+    const {candidateProfile,output}=await stage('evidence-extraction',()=>validatedModelCall(async()=>{
+      const extracted=await provider.extractEvidence(text,position);
+      return {candidateProfile:validateProfile(extracted?.candidateProfile,text),output:validateEvidence(extracted,text,rubric)};
+    }));
+    const vectors=await stage('evidence-embedding',()=>provider.embed(output.map(item=>item.statement)));
     const id=randomUUID(),createdAt=Date.now(),items=output.map((item,index)=>({...item,id:randomUUID(),vector:vectors[index]})),keys=items.map(item=>item.key);
     for(let attempt=0;attempt<3;attempt++){
-      const snapshot=await store.readScoring(workspace,{embeddingModel,mappingKeys:keys});
+      const snapshot=await stage('scoring-read',()=>store.readScoring(workspace,{embeddingModel,mappingKeys:keys}));
       const existing=modelRefs(snapshot),seeds=existing.length?[]:await initialReferences(),references=existing.length?existing:structuredClone(seeds);
       const job={id,candidateProfile,...(fileName?{fileName}:{}),scoringUnit:SCORING_UNIT,scoringFormula:SCORING_FORMULA,createdAt,position:structuredClone(position),embeddingModel,referenceVersion:snapshot.version,evidence:items.map(item=>{
         const mapping=snapshot.mappings[item.key],evidence={...item,status:'pending'};
@@ -84,14 +91,14 @@ export function createScoringService(store, provider = { embed, extractEvidence,
       })};
       // Network I/O finishes before entering the short commit transaction.
       await assessApproved(job,references);
-      try{return await store.update(workspace,state=>{
+      try{return await stage('scoring-commit',()=>store.update(workspace,state=>{
         assertPlan(state,snapshot,keys);
         if(state.deletedCandidates?.[id])throw Object.assign(new Error('This CV was deleted.'),{status:404});
         if(!modelRefs(state).length)state.references.push(...structuredClone(seeds));
         const now=Date.now();for(const [jobId,stored] of Object.entries(state.jobs))if(now-stored.createdAt>24*3600000)delete state.jobs[jobId];
         const jobs=Object.values(state.jobs).sort((a,b)=>a.createdAt-b.createdAt);while(jobs.length>=20)delete state.jobs[jobs.shift().id];
         job.referenceVersion=state.version;job.result=calculate(job,state.references,embeddingModel,rubric);state.jobs[id]=job;return publicJob(job);
-      });}catch(error){if(!(error instanceof PlanningConflict))throw error;}
+      }));}catch(error){if(!(error instanceof PlanningConflict))throw error;}
     }
     throw busy();
   }
@@ -102,22 +109,22 @@ export function createScoringService(store, provider = { embed, extractEvidence,
     if(new Set(decisions.map(d=>d.id)).size!==decisions.length)throw Object.assign(new Error('Duplicate decisions are not allowed.'),{status:400});
     const approved=decisions.filter(d=>d.action==='approve');let prepared;
     for(let attempt=0;attempt<3;attempt++){
-      const snapshot=await store.readScoring(workspace,{jobId,embeddingModel}),original=snapshot.jobs[jobId];assertJob(original,{review:true});
+      const snapshot=await stage('review-read',()=>store.readScoring(workspace,{jobId,embeddingModel})),original=snapshot.jobs[jobId];assertJob(original,{review:true});
       if(decisions.some(d=>!original.evidence.some(e=>e.id===d.id&&e.status==='pending')))throw Object.assign(new Error('This review changed. Reload the result and try again.'),{status:409});
-      if(!prepared){const vectors=await provider.embed(approved.map(d=>d.statement.trim()));prepared=approved.map((d,index)=>({id:randomUUID(),dimension:d.dimension,band:d.band,cap:d.cap,statement:d.statement.trim(),vector:vectors[index],embeddingModel,source:'human',sourceJobId:jobId,approvedAt:new Date().toISOString()}));}
+      if(!prepared){const vectors=await stage('review-embedding',()=>provider.embed(approved.map(d=>d.statement.trim())));prepared=approved.map((d,index)=>({id:randomUUID(),dimension:d.dimension,band:d.band,cap:d.cap,statement:d.statement.trim(),vector:vectors[index],embeddingModel,source:'human',sourceJobId:jobId,approvedAt:new Date().toISOString()}));}
       const job=structuredClone(original),references=[...modelRefs(snapshot),...prepared],mappings={};
       for(const d of decisions){const item=job.evidence.find(e=>e.id===d.id);item.status=d.action==='approve'?'approved':'rejected';
         if(d.action==='approve'){const ref=prepared[approved.indexOf(d)];item.dimension=d.dimension;item.band=d.band;item.referenceId=ref.id;mappings[item.key]={action:'approve',sourceJobId:jobId,dimension:d.dimension,referenceId:ref.id};}
         else mappings[item.key]={action:'reject',sourceJobId:jobId};
       }
       await assessApproved(job,references);
-      try{return await store.update(workspace,state=>{
+      try{return await stage('scoring-commit',()=>store.update(workspace,state=>{
         const current=state.jobs[jobId];assertJob(current,{review:true});
         if(!isDeepStrictEqual(current,original))throw new PlanningConflict();
         assertPlan(state,snapshot,Object.keys(mappings));
         state.references.push(...structuredClone(prepared));Object.assign(state.mappings,mappings);state.version++;job.referenceVersion=state.version;
         job.result=calculate(job,state.references,embeddingModel,rubric);state.jobs[jobId]=job;return publicJob(job);
-      });}catch(error){if(!(error instanceof PlanningConflict))throw error;}
+      }));}catch(error){if(!(error instanceof PlanningConflict))throw error;}
     }
     throw busy();
   }
