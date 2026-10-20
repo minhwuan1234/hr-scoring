@@ -11,7 +11,7 @@ test('Lark credential check caches authentication and exposes no secrets or toke
   if(calls===1)await new Promise(resolve=>{release=resolve;});return success();
  }});
  const first=client.check(),second=client.check();assert.equal(calls,1);release();
- assert.deepEqual(await first,{connected:true,recipientCount:1});await second;await client.check();assert.equal(calls,1);
+ assert.deepEqual(await first,{connected:true,recipientCount:3});await second;await client.check();assert.equal(calls,1);
  assert.doesNotMatch(JSON.stringify(client.status()),/synthetic|token|secret/);
  time=7140000;await client.check();assert.equal(calls,2);
 });
@@ -42,9 +42,9 @@ const candidate={cvAvailable:true,id:'cv-one',positionId:'role',positionVersion:
 const cvUrl=links.url('c'.repeat(64),'synthetic-cv-id');
 const payload={requestId:'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',candidates:[{id:candidate.id,positionId:'role',positionVersion:1,driveUrl:'https://attacker.test/untrusted-client-link'}],receivers:['unapproved'],total:100,name:'invented'};
 const store={candidates:async workspace=>workspace===owner?[candidate]:[]};
-test('recipient is temporarily limited to the confirmed user ending e32',()=>{
- assert.deepEqual(LARK_RECIPIENTS,['ou_f77cf794a1319628941dd689ecc97e32']);
- assert.equal(new Set(LARK_RECIPIENTS).size,1);
+test('all three user-confirmed recipients are restored',()=>{
+ assert.deepEqual(LARK_RECIPIENTS,['ou_f77cf794a1319628941dd689ecc97e32','ou_4eb96bd84a22b6511fcb316d35ded621','ou_9f7de713af63322b36ee7e41f5731313']);
+ assert.equal(new Set(LARK_RECIPIENTS).size,3);
 });
 test('candidate card preserves the two original buttons and uses dynamic saved score breakdowns',()=>{
  const card=candidateCard(candidate,cvUrl),actions=card.elements.at(-1).actions;
@@ -67,15 +67,14 @@ test('Lark client sends interactive cards only to confirmed users and validates 
  assert.deepEqual(await client.sendCard(LARK_RECIPIENTS[0],card,'stable-id'),{messageId:'synthetic-message'});
  assert.equal(messages[0].receive_id,LARK_RECIPIENTS[0]);assert.equal(messages[0].msg_type,'interactive');assert.equal(messages[0].uuid,'stable-id');assert.deepEqual(JSON.parse(messages[0].content),card);
  await assert.rejects(()=>client.sendCard('unapproved',card,'id'),e=>e.status===400);assert.equal(messages.length,1);
- for(const receiver of ['ou_4eb96bd84a22b6511fcb316d35ded621','ou_9f7de713af63322b36ee7e41f5731313'])await assert.rejects(()=>client.sendCard(receiver,card,'id'),e=>e.status===400);
  const denied=createLarkClient({env,fetcher:async url=>url.endsWith('/internal')?success():{ok:true,json:async()=>({code:230013,msg:'private upstream body'})}});
  await assert.rejects(()=>denied.sendCard(LARK_RECIPIENTS[0],card,'id'),e=>e.code==='LARK_SEND_REJECTED'&&e.message.includes('230013')&&!e.message.includes('private upstream'));
 });
 test('sending uses server-owned records and ignores client scores, identities and recipients',async()=>{
  const sent=[];const lark={check:async()=>({connected:true}),sendCard:async(receiver,card,uuid)=>{sent.push({receiver,card,uuid});}};
- const result=await sendCandidatesToLark(store,lark,owner,payload,links);assert.equal(result.complete,true);assert.equal(result.sentCount,1);
+ const result=await sendCandidatesToLark(store,lark,owner,payload,links);assert.equal(result.complete,true);assert.equal(result.sentCount,3);
  assert.deepEqual(sent.map(s=>s.receiver),LARK_RECIPIENTS);assert.match(JSON.stringify(sent[0].card),/Synthetic Candidate/);assert.doesNotMatch(JSON.stringify(sent[0].card),/invented/);
- assert.equal(new Set(sent.map(s=>s.uuid)).size,1);
+ assert.equal(new Set(sent.map(s=>s.uuid)).size,3);
  const fileLink=sent[0].card.elements.at(-1).actions[0].url;assert.equal(links.verify(fileLink.split('/').at(-1)).id,candidate.id);assert.ok(!fileLink.includes('attacker.test'));
  let networkCalls=0;const unused={check:async()=>{networkCalls++;},sendCard:async()=>{networkCalls++;}};
  await assert.rejects(()=>sendCandidatesToLark(store,unused,'b'.repeat(64),payload,links),e=>e.status===404);
@@ -88,9 +87,9 @@ test('partial delivery is reported and retry retains each candidate deduplicatio
  const batch={...payload,candidates:[...payload.candidates,{id:second.id,positionId:second.positionId,positionVersion:1}]};
  const saved={candidates:async()=>[candidate,second]};
  const lark={check:async()=>({connected:true}),sendCard:async(receiver,card,uuid)=>{calls.push({receiver,uuid});if(card.elements[0].text.content==='Second Candidate'&&fail)throw Object.assign(new Error('Synthetic denied delivery'),{code:'LARK_SEND_REJECTED'});delivered.add(uuid);}};
- const first=await sendCandidatesToLark(saved,lark,owner,batch,links);assert.equal(first.complete,false);assert.equal(first.sentCount,1);assert.equal(first.failures.length,1);
- fail=false;const retry=await sendCandidatesToLark(saved,lark,owner,batch,links);assert.equal(retry.complete,true);assert.equal(delivered.size,2);
- assert.deepEqual(calls.slice(0,2),calls.slice(2));
+ const first=await sendCandidatesToLark(saved,lark,owner,batch,links);assert.equal(first.complete,false);assert.equal(first.sentCount,3);assert.equal(first.failures.length,3);
+ fail=false;const retry=await sendCandidatesToLark(saved,lark,owner,batch,links);assert.equal(retry.complete,true);assert.equal(delivered.size,6);
+ assert.deepEqual(calls.slice(0,6),calls.slice(6));
 });
 test('CV buttons require generated file links rather than arbitrary client URLs',()=>{
  for(const url of ['javascript:alert(1)','https://example.test/private','https://drive.google.com/file/d/test/view'])assert.throws(()=>validateCvUrl(url),e=>e.status===400);

@@ -17,13 +17,13 @@ export default function LarkSendDialog({candidates,onClose,onSent}:{candidates:C
   }catch(err){setError(err instanceof Error?err.message:'Unable to send to Lark. Please retry.');}finally{setBusy(false);}
  }
  return <dialog ref={dialog} className="review-dialog lark-send-dialog" aria-labelledby="lark-send-title" onCancel={e=>{e.preventDefault();if(!busy)onClose();}}>
-  <header><div><h2 id="lark-send-title">Send Lark</h2><p>{candidates.length} CV{candidates.length===1?'':'s'} · 1 recipient</p></div><button className="icon-button" aria-label="Close Send Lark" disabled={busy} onClick={onClose}><X size={18}/></button></header>
+  <header><div><h2 id="lark-send-title">Send Lark</h2><p>{candidates.length} CV{candidates.length===1?'':'s'} · 3 recipients</p></div><button className="icon-button" aria-label="Close Send Lark" disabled={busy} onClick={onClose}><X size={18}/></button></header>
   <form onSubmit={e=>{e.preventDefault();void send();}}>
    <div className="lark-send-body">
     {candidates.map(c=><div className="lark-cv-field" key={key(c)}><strong>{c.candidateProfile?.name||c.fileName}</strong><span>{c.positionName} · {c.total}/100</span>{!c.cvAvailable&&<span className="history-error">Original PDF missing. Upload and score this CV again before sending.</span>}</div>)}
     {error&&<p className="history-error" role="alert">{error}</p>}
    </div>
-   <footer><button className="button secondary" type="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button lark-send-confirm" type="submit" disabled={busy||candidates.some(c=>!c.cvAvailable)}><Send size={14}/>{busy?'Sending…':attempted?'Retry sending':'Send to recipient'}</button></footer>
+   <footer><button className="button secondary" type="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button lark-send-confirm" type="submit" disabled={busy||candidates.some(c=>!c.cvAvailable)}><Send size={14}/>{busy?'Sending…':attempted?'Retry sending':'Send to 3 recipients'}</button></footer>
   </form>
  </dialog>;
 }
