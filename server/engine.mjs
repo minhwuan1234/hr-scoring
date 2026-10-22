@@ -1,7 +1,7 @@
 import {ModelOutputError} from './scoring-errors.mjs';
 import { RUBRIC, getBand } from './rubric.mjs';
 
-import { cvSentences, sentenceKey } from './sentences.mjs';
+import { cvSentences, sentenceKey, MAX_EVIDENCE_SENTENCES } from './sentences.mjs';
 export { normalize } from './sentences.mjs';
 export const SCORING_FORMULA = 'independent-ceiling-v2';
 
@@ -22,7 +22,7 @@ export function nearest(evidence, references, embeddingModel) {
 }
 
 export function validateEvidence(output, cvText, rubric = RUBRIC) {
-  if (!Array.isArray(output?.evidence) || output.evidence.length > 36) throw new ModelOutputError('The model returned invalid evidence. Please retry.','MODEL_EVIDENCE_INVALID');
+  if (!Array.isArray(output?.evidence) || output.evidence.length > MAX_EVIDENCE_SENTENCES) throw new ModelOutputError('The model returned invalid evidence. Please retry.','MODEL_EVIDENCE_INVALID');
   const sentences = new Map(cvSentences(cvText).map(sentence => [sentence.sentenceId,sentence]));
   const seen = new Set();
   return output.evidence.map(item => {

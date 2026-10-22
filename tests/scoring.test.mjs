@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cosine, calculate, validateDecision, validateEvidence } from '../server/engine.mjs';
 import { createStore, workspaceId } from '../server/store.mjs';
-import { cvSentences, sentenceKey } from '../server/sentences.mjs';
+import { cvSentences, sentenceKey, MAX_EVIDENCE_SENTENCES, SCORING_UNIT } from '../server/sentences.mjs';
 import { createScoringService } from '../server/service.mjs';
 
 const model = 'test-embedding';
@@ -50,9 +50,9 @@ test('identical sentences across bullets and PDF line wrapping share one key', (
   assert.equal(sentenceKey('Learned Sheets.'),sentenceKey('learned Sheets'));
 });
 
-test('keeps multi-clause unpunctuated bullets whole and separates full sentences', () => {
+test('omits unpunctuated bullets and keeps only complete period-terminated sentences', () => {
   const source='• Managed a team, built trackers; followed up weekly\n• Learned a tool and applied it\n\nI wrote content. I scheduled interviews.';
-  assert.deepEqual(cvSentences(source).map(s=>s.quote),['Managed a team, built trackers; followed up weekly','Learned a tool and applied it','I wrote content.','I scheduled interviews.']);
+  assert.deepEqual(cvSentences(source).map(s=>s.quote),['I wrote content.','I scheduled interviews.']);
 });
 
 test('rejects invented sentence IDs and keyword-only provider output', () => {
@@ -110,8 +110,8 @@ test('human decisions persist and can be reused without sending raw CV text to s
     await assert.rejects(()=>service.get(workspace,job.id),error=>error.status===409 && /rules changed/.test(error.message));
     await assert.rejects(()=>service.review(workspace,job.id,[decision]),error=>error.status===409 && /rules changed/.test(error.message));
     await store.update(workspace,state=>{ delete state.jobs[job.id].scoringUnit; });
-    await assert.rejects(()=>service.get(workspace,job.id),error=>error.status===409 && /full sentences/.test(error.message));
-    await assert.rejects(()=>service.review(workspace,job.id,[decision]),error=>error.status===409 && /full sentences/.test(error.message));
+    await assert.rejects(()=>service.get(workspace,job.id),error=>error.status===409 && /Sentence extraction rules changed/.test(error.message));
+    await assert.rejects(()=>service.review(workspace,job.id,[decision]),error=>error.status===409 && /Sentence extraction rules changed/.test(error.message));
   } finally { await rm(directory,{recursive:true,force:true}); }
 });
 
@@ -233,4 +233,36 @@ test('invalid separate assessments fail atomically rather than falling back to r
       assert.equal(await store.update('workspace',state=>Object.keys(state.jobs).length),0);
     }
   } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('period extraction preserves wrapped clauses, abbreviations, numbers and closing quotes',()=>{
+ const first='Dr. Lee supported U.S. campaigns, e.g. email content; increased conversion by 3.5% and\nreported results at example.com.';
+ const source=`• ${first}\n• "Learned Sheets, built a tracker, and followed up weekly."\n• Unfinished activity without a period`;
+ assert.deepEqual(cvSentences(source).map(s=>s.quote),[first.replace(/\s+/g,' '),'"Learned Sheets, built a tracker, and followed up weekly."']);
+ assert.deepEqual(cvSentences('Managed a team!\n\nLearned a tool?\n\nUnfinished tail'),[]);
+ assert.deepEqual(cvSentences('First complete sentence. second complete sentence. Unfinished tail').map(s=>s.quote),['First complete sentence.','second complete sentence.']);
+});
+test('selection is capped at ten relevant sentences, without discarding later source sentences',()=>{
+ const cv=Array.from({length:15},(_,i)=>`Delivered project ${i+1}, documented output and coordinated delivery.`).join(' '),sentences=cvSentences(cv);
+ assert.equal(sentences.length,15);assert.equal(MAX_EVIDENCE_SENTENCES,10);
+ const evidence=sentences.slice(5).map(s=>({sentenceId:s.sentenceId,statement:'Coordinated delivery and documented output.',reason:'Project evidence.',dimension:'learning-drive',band:1}));
+ const selected=validateEvidence({evidence},cv);assert.equal(selected.length,10);assert.equal(selected.at(-1).quote,sentences[14].quote);
+ assert.throws(()=>validateEvidence({evidence:[{...evidence[0],sentenceId:'s1'},...evidence]},cv),e=>e.code==='MODEL_EVIDENCE_INVALID');
+});
+test('long complete sentences retain the ending context and existing reusable decision keys',()=>{
+ const cv='Coordinated campaign deliverables, '.repeat(120)+'but did not own the hiring process.';
+ const [sentence]=cvSentences(cv);assert.equal(sentence.quote,cv);
+ const [selected]=validateEvidence({evidence:[{sentenceId:sentence.sentenceId,statement:'Supported campaign execution without hiring ownership.',reason:'Explicitly limited scope.',dimension:'employer-branding',band:1}]},cv);
+ assert.equal(selected.quote,cv);assert.match(selected.quote,/but did not own the hiring process\.$/);
+ assert.equal(SCORING_UNIT,'sentence-period-v2');assert.match(selected.key,/^sentence-v1:/);
+});
+test('a CV with ten selected whole sentences can ask at most ten human review questions',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'sentence-limit-')),store=createStore({databaseUrl:null,directory});
+ const text=Array.from({length:12},(_,i)=>`Learned tool ${i+1}, applied it to a project and documented the result.`).join(' ');
+ const provider={extractEvidence:async()=>({evidence:cvSentences(text).slice(2).map(s=>({sentenceId:s.sentenceId,statement:'Applied a newly learned tool.',reason:'Learning applied.',dimension:'learning-drive',band:1}))}),embed:async values=>values.map(v=>v==='Applied a newly learned tool.'?[1,0]:[0,1]),assessCeilings:fullAssessment};
+ try{
+  const result=await createScoringService(store,provider,'test-model').analyze('owner',text);
+  assert.equal(result.pending.length,10);assert.equal(new Set(result.pending.map(p=>p.quote)).size,10);assert.ok(result.pending.every(p=>p.quote.endsWith('.')&&p.quote.includes('documented the result')));
+  assert.equal(Object.keys((await store.readScoring('owner')).jobs).length,1);
+ }finally{await store.close();await rm(directory,{recursive:true,force:true});}
 });

@@ -1,3 +1,4 @@
+import {SCORING_UNIT,MAX_EVIDENCE_SENTENCES} from './sentences.mjs';
 import {previewLarkDelivery} from './lark-delivery-plan.mjs';
 import {allowedWriteOrigin} from './request-origin.mjs';
 import {createDecisionLinks} from './decision-links.mjs';
@@ -77,7 +78,7 @@ const server = createServer(async (request,response) => {
       return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
     }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-reviewer-decisions-v3',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{sentencePolicy:SCORING_UNIT,maxEvidenceSentences:MAX_EVIDENCE_SENTENCES,performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-reviewer-decisions-v3',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = workspaceId(request.headers['x-workspace-token']);
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){

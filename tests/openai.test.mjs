@@ -16,6 +16,7 @@ test('Luna Responses request uses server key, structured evidence and no respons
    assert.ok(body.input[0].content[0].text.includes('synthetic CV text'));
    const fields = body.text.format.schema.properties.evidence.items.anyOf[0].properties;
    assert.ok(fields.sentenceId); assert.equal(fields.keyword,undefined); assert.equal(fields.quote,undefined);
+   assert.equal(body.text.format.schema.properties.evidence.maxItems,10);assert.match(body.instructions,/at most 10/);assert.match(body.instructions,/sentence-ending period/);
    return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:'{"evidence":[]}'}]}]})};
   };
   assert.deepEqual(await extractEvidence('synthetic CV text'),{evidence:[]});

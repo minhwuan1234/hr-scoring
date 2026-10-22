@@ -3,7 +3,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {validateProfile} from './profile.mjs';
 import {validateFileName} from './candidates.mjs';
 import {DEFAULT_POSITION} from './positions.mjs';
-import { SCORING_UNIT } from './sentences.mjs';
+import { SCORING_UNIT, MAX_EVIDENCE_SENTENCES } from './sentences.mjs';
 import { randomUUID } from 'node:crypto';
 import { getBand } from './rubric.mjs';
 import { SCORING_FORMULA, calculate, nearest, validateDecision, validateEvidence } from './engine.mjs';
@@ -58,7 +58,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
 
   function assertJob(job,{review=false}={}){
     if(!job||Date.now()-job.createdAt>24*3600000)throw Object.assign(new Error('This review has expired. Please score the CV again.'),{status:404});
-    if(job.scoringUnit!==SCORING_UNIT)throw Object.assign(new Error('Scoring now uses full sentences. Please upload and score this CV again.'),{status:409});
+    if(job.scoringUnit!==SCORING_UNIT)throw Object.assign(new Error('Sentence extraction rules changed. Please upload and score this CV again.'),{status:409});
     if(job.scoringFormula!==SCORING_FORMULA)throw Object.assign(new Error('Scoring rules changed. Please upload and score this CV again.'),{status:409});
     if(review&&job.embeddingModel!==embeddingModel)throw Object.assign(new Error('The embedding configuration changed. Please score the CV again.'),{status:409});
   }
@@ -104,7 +104,7 @@ export function createScoringService(store, provider = { embed, extractEvidence,
   }
 
   async function review(workspace,jobId,input){
-    if(!Array.isArray(input)||!input.length||input.length>36)throw Object.assign(new Error('Provide review decisions.'),{status:400});
+    if(!Array.isArray(input)||!input.length||input.length>MAX_EVIDENCE_SENTENCES)throw Object.assign(new Error('Provide review decisions.'),{status:400});
     const decisions=structuredClone(input);decisions.forEach(decision=>validateDecision(decision,rubric));
     if(new Set(decisions.map(d=>d.id)).size!==decisions.length)throw Object.assign(new Error('Duplicate decisions are not allowed.'),{status:400});
     const approved=decisions.filter(d=>d.action==='approve');let prepared;
