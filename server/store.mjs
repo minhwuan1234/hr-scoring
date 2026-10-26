@@ -95,7 +95,7 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     const name=reviewerName(receiver);if(!name)throw Object.assign(new Error('Unknown reviewer.'),{status:400});
     return update(scope,state=>{const c=state.candidates?.[id];if(!c||state.deletedCandidates?.[id])throw Object.assign(new Error('This CV is no longer available.'),{status:404});c.reviewerDecisions??={};if(c.reviewerDecisions[receiver]?.decision!==decision){const decidedAt=Math.max(Date.now(),(c.reviewerDecisions[receiver]?.decidedAt||0)+1);c.reviewerDecisions[receiver]={name,decision,decidedAt};c.updatedAt=decidedAt;}return structuredClone(c);});
   }
-  async function candidatePage(owner,input){const query=candidateQuery(input);if(!pool)return fileCandidatePage(await fileCandidates({update},owner),query,owner);await initialize();return postgresCandidatePage(pool,owner,query);}
+  async function candidatePage(owner,input,exportAll=false){const query=candidateQuery(input);if(!pool)return fileCandidatePage(await fileCandidates({update},owner),query,owner,exportAll);await initialize();return postgresCandidatePage(pool,owner,query,exportAll);}
   async function candidates(owner,selection){
     if(!pool){const rows=await fileCandidates({update},owner);if(!selection)return rows;const keys=new Set(selection.map(c=>JSON.stringify([c.positionId,c.positionVersion,c.id])));return rows.filter(c=>keys.has(JSON.stringify([c.positionId,c.positionVersion,c.id])));}
     await initialize();

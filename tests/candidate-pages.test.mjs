@@ -18,6 +18,8 @@ for(const backend of ['file','postgresql'])test(`${backend}: pages are fixed at 
   for(const p of templates){const rows=records.filter(c=>c.positionId===p.id&&c.positionVersion===p.version);await store.update(positionScope(owner,p),state=>{state.candidates=Object.fromEntries(rows.map(c=>[c.id,c]));});}
   await store.update('other',state=>{state.candidates={private:{...records[0],id:'private',candidateProfile:{name:'Private candidate'}}};});
   const first=await store.candidatePage(owner,{}),second=await store.candidatePage(owner,{page:2}),last=await store.candidatePage(owner,{page:3});
+  const exported=await store.candidatePage(owner,{},true);assert.equal(exported.rows.length,25);assert.deepEqual(exported.rows.map(c=>c.id),(await store.candidates(owner)).map(c=>c.id));
+  const exportRole=await store.candidatePage(owner,{positionId:a.id,period:'month',date:'1970-01-01'},true);assert.equal(exportRole.rows.length,16);assert.ok(exportRole.rows.every(c=>c.positionId===a.id));
   assert.equal(first.pageSize,10);assert.equal(first.rows.length,10);assert.equal(second.rows.length,10);assert.equal(last.rows.length,5);assert.equal(first.total,25);assert.equal(first.pages,3);
   assert.deepEqual([...first.rows,...second.rows,...last.rows].map(c=>c.id),(await store.candidates(owner)).map(c=>c.id));
   assert.equal(new Set([...first.rows,...second.rows,...last.rows].map(c=>c.id)).size,25);

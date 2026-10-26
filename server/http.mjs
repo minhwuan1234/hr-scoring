@@ -1,3 +1,4 @@
+import {candidateCsv} from './candidate-csv.mjs';
 import {SCORING_UNIT,MAX_EVIDENCE_SENTENCES} from './sentences.mjs';
 import {previewLarkDelivery} from './lark-delivery-plan.mjs';
 import {allowedWriteOrigin} from './request-origin.mjs';
@@ -87,6 +88,7 @@ const server = createServer(async (request,response) => {
         response.writeHead(200,{'Content-Type':'application/pdf','Content-Length':bytes.length,'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});return response.end(bytes);
       }
       if(request.method==='GET' && path==='/api/lark/status')return json(response,200,lark.status());
+      if(request.method==='GET' && path==='/api/candidates/export')return json(response,200,{csv:candidateCsv((await store.candidatePage(workspace,Object.fromEntries(requestUrl.searchParams),true)).rows)});
       if(request.method==='GET' && path==='/api/candidates/page')return json(response,200,await store.candidatePage(workspace,Object.fromEntries(requestUrl.searchParams)));
       if(request.method==='GET' && path==='/api/candidates')return json(response,200,await store.candidates(workspace));
       if(request.method==='GET' && path==='/api/positions')return json(response,200,await positions.list(workspace));

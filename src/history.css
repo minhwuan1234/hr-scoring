@@ -59,3 +59,7 @@
 .history-period-controls select:focus-visible,.history-period-controls input:focus-visible{outline:2px solid #aaa89e;outline-offset:2px}
 .history-period-controls label{display:flex;align-items:center;gap:6px}.history-period-zone{font-size:10px;color:#aaa9a5}
 @media(max-width:600px){.history-chart-heading{align-items:flex-start;flex-direction:column;gap:12px}.history-chart{padding-top:28px}.history-period-zone{display:none}}
+
+.history-search{flex:0 1 280px;max-width:280px;box-sizing:border-box}
+.export-csv{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px}
+@media(max-width:600px){.history-search{flex-basis:100%;max-width:360px;min-width:0;width:100%}}
