@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createStore} from '../server/store.mjs';
 import {createPositionService,positionScope,DEFAULT_POSITION} from '../server/positions.mjs';
-import {candidateQuery} from '../server/candidate-pages.mjs';
+import {candidateQuery,candidateDateRange,fileCandidatePage} from '../server/candidate-pages.mjs';
 import {postgresPool} from './helpers/pglite.mjs';
 const draft={name:'Account',rubric:[{title:'Delivery',max:100,bands:[[0,100,'Delivered projects.']],examples:[]}]};
 for(const backend of ['file','postgresql'])test(`${backend}: pages are fixed at ten, tenant-scoped and searchable across the complete history`,async()=>{
@@ -31,6 +31,9 @@ for(const backend of ['file','postgresql'])test(`${backend}: pages are fixed at 
    const expected=records.filter(c=>status==='review'?c.state==='review':c.state==='complete'&&(status==='rejected'?c.total<=50:status==='consider'?c.total>50&&c.total<70:c.total>=70));
    const result=await store.candidatePage(owner,{status});assert.equal(result.total,expected.length);assert.equal(result.stats.all,25);assert.ok(result.rows.every(c=>expected.some(e=>e.id===c.id)));
   }
+  assert.equal((await store.candidatePage(owner,{period:'week',date:'1970-01-01'})).total,25);
+  assert.equal((await store.candidatePage(owner,{period:'month',date:'1970-01-25'})).stats.all,25);
+  const outside=await store.candidatePage(owner,{period:'week',date:'1970-01-08'});assert.equal(outside.total,0);assert.equal(outside.stats.all,0);
   assert.equal((await store.candidatePage(owner,{page:9999})).page,3);
   assert.equal((await store.candidatePage('other',{})).total,1);assert.equal((await store.candidatePage('stranger',{})).total,0);assert.deepEqual((await store.candidatePage('stranger',{})).positions,[]);
   const subset=await store.candidates(owner,[records[0],records[24],{id:'private',positionId:'hr-intern',positionVersion:1}]);assert.equal(subset.length,2);assert.deepEqual(new Set(subset.map(c=>c.id)),new Set(['cv-00','cv-24']));
@@ -46,4 +49,14 @@ for(const backend of ['file','postgresql'])test(`${backend}: pages are fixed at 
 test('candidate paging validates filters and fixes page size on the server',()=>{
  for(const input of [{page:0},{page:-1},{page:'01'},{page:'1; DROP TABLE x'},{page:'10000000'},{status:'unknown'},{search:'x'.repeat(301)},{positionId:[]}])assert.throws(()=>candidateQuery(input),e=>e.status===400);
  assert.deepEqual(candidateQuery({page:'2',pageSize:1000,search:'  Name  '}),{page:2,positionId:'',search:'name',status:'all'});
+});
+
+test('Vietnam calendar filters use Monday weeks and exclusive next-period boundaries',()=>{
+ const range=candidateDateRange('week','2026-10-25');
+ assert.deepEqual(range,{from:Date.parse('2026-10-18T17:00:00Z'),to:Date.parse('2026-10-25T17:00:00Z')});
+ assert.deepEqual(candidateDateRange('month','2026-12-31'),{from:Date.parse('2026-11-30T17:00:00Z'),to:Date.parse('2026-12-31T17:00:00Z')});
+ const rows=[range.from-1,range.from,range.to-1,range.to].map((createdAt,i)=>({id:String(i),positionId:'role',positionVersion:1,positionName:'Role',createdAt,state:'complete',total:80}));
+ const page=fileCandidatePage(rows,candidateQuery({period:'week',date:'2026-10-25'}),'owner');
+ assert.equal(page.total,2);assert.equal(page.stats.all,2);assert.equal(page.stats.pass,2);
+ for(const input of [{period:'year',date:'2026-01-01'},{period:'week',date:'2026-02-30'},{period:'month',date:'bad'},{period:'week'}])assert.throws(()=>candidateQuery(input),e=>e.status===400);
 });
