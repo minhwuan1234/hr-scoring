@@ -6,6 +6,7 @@ import { readCv } from './cv-input';
 import {positionKey,type PositionTemplate} from './positions';
 import { candidateCvRequest, scoringRequest, type ScoreResult, type ReviewDecision } from './scoring-api';
 import ReviewDialog from './ReviewDialog';
+import {scoreCvBatch} from './scoring-batch';
 import './scoring.css';
 
 type Stage = 'ready' | 'scoring' | 'review' | 'complete' | 'error';
@@ -29,17 +30,21 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
   const [selectedId,setSelectedId] = useState<string | null>(() => restoreCurrent()[0]?.id ?? null);
   const [busy,setBusy] = useState(false);
   const [reviewBusy,setReviewBusy] = useState(false);
+  const [waitingReview,setWaitingReview]=useState(false);
+  const [batchProgress,setBatchProgress]=useState({current:0,total:0});
   const [reviewId,setReviewId] = useState<string | null>(null);
   const [reviewError,setReviewError] = useState('');
   const [errors,setErrors] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const running = useRef(false);
+  const reviewWait=useRef<{id:string;resolve:()=>void}|null>(null);
   const mounted = useRef(true);
   const selected = candidates.find(item => item.id === selectedId);
   const reviewing = candidates.find(item => item.id === reviewId);
   const evidence = reviewing?.result?.pending[0];
   const pending = candidates.filter(item => item.stage === 'ready' && item.file);
-  const completed = candidates.filter(item => item.stage === 'complete').length;
+  const processed = candidates.filter(item => item.result).length;
+  const awaitingReview=candidates.filter(item=>item.stage==='review').length;
   const patch = (id: string, changes: Partial<Candidate>) => { if (mounted.current) setCandidates(current => current.map(item => item.id === id ? {...item,...changes} : item)); };
 
   useEffect(() => {
@@ -48,18 +53,18 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     for (const item of restoreCurrent()) {
       void scoringRequest<ScoreResult>(`/api/jobs/${item.result!.id}?positionId=${encodeURIComponent(position.id)}&positionVersion=${position.version}`).then(result => patch(item.id,{result,stage:result.state})).catch(error => {if(error?.status===404)setCandidates(current=>current.filter(c=>c.id!==item.id));else patch(item.id,{stage:'error',error:message(error)});});
     }
-    return () => { mounted.current = false; };
+    return () => { mounted.current = false; reviewWait.current?.resolve();reviewWait.current=null; };
   }, []);
   useEffect(() => {
     try { sessionStorage.setItem(sessionKey,JSON.stringify(candidates.filter(item => item.result).map(({id,name,stage,result}) => ({id,name,stage,result})))); } catch { /* The active page still works if browser storage is full. */ }
   }, [candidates]);
 
-  useEffect(()=>{const deleted=(event:Event)=>{const items=(event as CustomEvent<{id:string;positionId:string;positionVersion:number}[]>).detail.filter(c=>c.positionId===position.id&&c.positionVersion===position.version);if(!items.length)return;const ids=new Set(items.map(c=>c.id));setCandidates(current=>current.filter(c=>!c.result||!ids.has(c.result.id)));setReviewId(null);};window.addEventListener('candidates-deleted',deleted);return()=>window.removeEventListener('candidates-deleted',deleted);},[position.id,position.version]);
+  useEffect(()=>{const deleted=(event:Event)=>{const items=(event as CustomEvent<{id:string;positionId:string;positionVersion:number}[]>).detail.filter(c=>c.positionId===position.id&&c.positionVersion===position.version);if(!items.length)return;const ids=new Set(items.map(c=>c.id));setCandidates(current=>current.filter(c=>!c.result||!ids.has(c.result.id)));setReviewId(null);if(reviewWait.current&&candidates.find(c=>c.id===reviewWait.current!.id&&c.result&&ids.has(c.result.id))){reviewWait.current.resolve();reviewWait.current=null;}};window.addEventListener('candidates-deleted',deleted);return()=>window.removeEventListener('candidates-deleted',deleted);},[position.id,position.version,candidates]);
   useEffect(()=>{if(selectedId&&!candidates.some(c=>c.id===selectedId))setSelectedId(candidates[0]?.id || null);},[candidates,selectedId]);
   useEffect(()=>{if(active)onBusyChange(busy||reviewBusy);},[active,busy,reviewBusy,onBusyChange]);
 
   function addFiles(files: File[]) {
-    if (running.current) return;
+    if (running.current || reviewBusy) return;
     const issues: string[] = [], additions: Candidate[] = [];
     for (const file of files) {
       if (!/\.pdf$/i.test(file.name)) { issues.push(`${file.name}: please choose a PDF.`); continue; }
@@ -68,27 +73,36 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
       additions.push({id:crypto.randomUUID(),name:file.name,file,stage:'ready'});
     }
     setErrors(issues);
-    if (additions.length) { setCandidates(current => [...current,...additions]); setSelectedId(current => current ?? additions[0].id); }
+    if (additions.length) { setCandidates(current => [...current,...additions]); setSelectedId(current => current ?? additions[0].id); void score(additions); }
   }
 
   async function score(queue: Candidate[]) {
-    if (running.current || !queue.length) return;
-    running.current = true; setBusy(true);
+    if (running.current || reviewBusy || !queue.length) return;
+    running.current = true; setBusy(true);setReviewId(null);
+    setBatchProgress({current:0,total:queue.length});let current=0;
     try {
-      for (const candidate of queue) {
-        if (!mounted.current) break;
-        setSelectedId(candidate.id); patch(candidate.id,{stage:'scoring',error:undefined});
-        try {
+      await scoreCvBatch(queue,{
+        isActive:()=>mounted.current,
+        score:async candidate=>{
+          setBatchProgress({current:++current,total:queue.length});
+          setSelectedId(candidate.id); patch(candidate.id,{stage:'scoring',error:undefined});
           const text = await readCv(candidate.file!);
+          if(!mounted.current)return;
           const result = await scoringRequest<ScoreResult>('/api/score',{text,fileName:candidate.name,positionId:position.id,positionVersion:position.version});
-          if(wasCandidateDeleted(result.id)){setCandidates(current=>current.filter(c=>c.id!==candidate.id));continue;}
+          if(wasCandidateDeleted(result.id)){if(mounted.current)setCandidates(items=>items.filter(c=>c.id!==candidate.id));return;}
           patch(candidate.id,{result,stage:result.state});
-          try{await candidateCvRequest(result.id,position.id,position.version,candidate.file);patch(candidate.id,{cvUploadFailed:false});}catch{patch(candidate.id,{cvUploadFailed:true});setErrors(current=>[...current,'Score saved, but the original CV could not be saved. Retry the CV upload below.']);}
+          try{await candidateCvRequest(result.id,position.id,position.version,candidate.file);patch(candidate.id,{cvUploadFailed:false});}catch{patch(candidate.id,{cvUploadFailed:true});if(mounted.current)setErrors(items=>[...items,'Score saved, but the original CV could not be saved. Retry the CV upload below.']);}
           notifyCandidatesChanged();
-          if (result.state === 'review') { setReviewError(''); setReviewId(candidate.id); break; }
-        } catch (error) { patch(candidate.id,{stage:'error',error:message(error)}); }
-      }
-    } finally { running.current = false; if (mounted.current) setBusy(false); }
+          return result;
+        },
+        onReview:candidate=>new Promise<void>(resolve=>{
+          if(!mounted.current){resolve();return;}
+          reviewWait.current={id:candidate.id,resolve:()=>{if(mounted.current)setWaitingReview(false);resolve();}};setWaitingReview(true);
+          setSelectedId(candidate.id);setReviewError('');setReviewId(candidate.id);
+        }),
+        onError:(candidate,error)=>patch(candidate.id,{stage:'error',error:message(error)}),
+      });
+    } finally { running.current = false; if (mounted.current) {setBusy(false);setWaitingReview(false);} }
   }
 
   async function decide(decision: ReviewDecision) {
@@ -96,10 +110,13 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     setReviewBusy(true); setReviewError('');
     try {
       const result = await scoringRequest<ScoreResult>(`/api/jobs/${reviewing.result.id}/review`,{decisions:[decision],positionId:position.id,positionVersion:position.version});
-      if(wasCandidateDeleted(result.id)){setCandidates(current=>current.filter(c=>c.id!==reviewing.id));setReviewId(null);return;}
+      if(wasCandidateDeleted(result.id)){setCandidates(current=>current.filter(c=>c.id!==reviewing.id));setReviewId(null);reviewWait.current?.resolve();reviewWait.current=null;return;}
       patch(reviewing.id,{result,stage:result.state});
       notifyCandidatesChanged();
-      if (result.state === 'complete') setReviewId(null);
+      if (result.state === 'complete') {
+        setReviewId(null);
+        if(reviewWait.current?.id===reviewing.id){reviewWait.current.resolve();reviewWait.current=null;}
+      }
     } catch (error) { setReviewError(message(error)); }
     finally { setReviewBusy(false); }
   }
@@ -122,21 +139,21 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
       <div className="page-heading"><div><h1>{position.name}<span className="title-dot">.</span></h1>{position.description&&<p>{position.description}</p>}</div></div>
       <div className="workspace-tabs" role="tablist" aria-label="Position views"><button role="tab" aria-selected={view==='screening'} disabled={busy||reviewBusy} onClick={()=>setView('screening')}>Screening</button><button role="tab" aria-selected={view==='history'} disabled={busy||reviewBusy} onClick={()=>setView('history')}>History <span className="count-badge">{history.positionCounts[position.id] || 0}</span></button></div>
       <div hidden={view!=='screening'}>
-      <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+      <input className="visually-hidden" ref={input} type="file" accept=".pdf,application/pdf" multiple disabled={busy||reviewBusy} aria-label="Choose candidate CVs" onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
       {errors.length > 0 && <div className="alert" role="alert"><CircleAlert size={15} /><div>{errors.map((error,index) => <p key={index}>{error}</p>)}</div><button className="icon-button" aria-label="Dismiss upload errors" onClick={() => setErrors([])}><X size={15} /></button></div>}
       {candidates.some(c=>c.cvUploadFailed&&c.file)&&<button className="text-button" disabled={busy} onClick={()=>void retryCvUploads()}>Retry CV upload</button>}
       <section className="workspace-panel scoring-workspace" aria-label={`${position.name} candidate scoring`}>
-        <div className="queue-panel"><div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2><div className="candidate-actions">{!!candidates.length && <button className="text-button add-cv-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={14} />Add CV</button>}{!!candidates.length && <button className="text-button" disabled={busy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div></div>
-          <div className="queue-list scoring-queue">{!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add CVs to review candidates<br />for {position.name}.</p><button className="text-button add-cv-button" disabled={busy} onClick={() => input.current?.click()}><Plus size={15} />Add CV</button></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
-            <button className="file-select" aria-pressed={selectedId === candidate.id} onClick={() => setSelectedId(candidate.id)}><span className="file-symbol"><FileText size={18} /><small>PDF</small></span><span className="file-detail"><strong title={candidate.name}>{candidate.name}</strong><span>{position.name}</span><span className={`status ${candidate.stage === 'complete' ? `candidate-outcome-${(candidate.result?.total ?? 0)<=50?'rejected':(candidate.result?.total ?? 0)<70?'consider':'pass'}` : candidate.stage === 'error' ? 'error' : ''}`}>{candidate.stage === 'scoring' ? <LoaderCircle size={11} className="spin" /> : candidate.stage === 'complete' ? <Check size={11} /> : candidate.stage === 'error' ? <CircleAlert size={11} /> : <span className="status-dot" />}{({ready:'Ready',scoring:'Scoring…',review:'Review needed',complete:(candidate.result?.total ?? 0)<=50?'Rejected':(candidate.result?.total ?? 0)<70?'Consider':'Pass',error:'Needs attention'})[candidate.stage]}</span></span></button><button className="icon-button remove-file" disabled={busy} aria-label={`Remove ${candidate.name}`} onClick={() => { const remaining = candidates.filter(item => item.id !== candidate.id); setCandidates(remaining); if (selectedId === candidate.id) setSelectedId(remaining[0]?.id ?? null); }}><X size={14} /></button>
+        <div className="queue-panel"><div className="panel-heading"><h2>Candidates <span className="count-badge">{candidates.length}</span></h2><div className="candidate-actions">{!!candidates.length && <button className="text-button add-cv-button" disabled={busy||reviewBusy} onClick={() => input.current?.click()}><Plus size={14} />Add CV</button>}{!!candidates.length && <button className="text-button" disabled={busy||reviewBusy} onClick={() => { setCandidates([]); setSelectedId(null); }}>Clear all</button>}</div></div>
+          <div className="queue-list scoring-queue">{!candidates.length ? <div className="queue-empty"><div className="empty-file-stack"><FileText size={28} strokeWidth={1.2} /></div><strong>Your next talent starts here</strong><p>Add CVs to review candidates<br />for {position.name}.</p><button className="text-button add-cv-button" disabled={busy||reviewBusy} onClick={() => input.current?.click()}><Plus size={15} />Add CV</button></div> : candidates.map(candidate => <div className={`file-row ${selectedId === candidate.id ? 'selected' : ''}`} key={candidate.id}>
+            <button className="file-select" aria-pressed={selectedId === candidate.id} onClick={() => setSelectedId(candidate.id)}><span className="file-symbol"><FileText size={18} /><small>PDF</small></span><span className="file-detail"><strong title={candidate.name}>{candidate.name}</strong><span>{position.name}</span><span className={`status ${candidate.stage === 'complete' ? `candidate-outcome-${(candidate.result?.total ?? 0)<=50?'rejected':(candidate.result?.total ?? 0)<70?'consider':'pass'}` : candidate.stage === 'error' ? 'error' : ''}`}>{candidate.stage === 'scoring' ? <LoaderCircle size={11} className="spin" /> : candidate.stage === 'complete' ? <Check size={11} /> : candidate.stage === 'error' ? <CircleAlert size={11} /> : <span className="status-dot" />}{({ready:'Ready',scoring:'Scoring…',review:'Review needed',complete:(candidate.result?.total ?? 0)<=50?'Rejected':(candidate.result?.total ?? 0)<70?'Consider':'Pass',error:'Needs attention'})[candidate.stage]}</span></span></button><button className="icon-button remove-file" disabled={busy||reviewBusy} aria-label={`Remove ${candidate.name}`} onClick={() => { const remaining = candidates.filter(item => item.id !== candidate.id); setCandidates(remaining); if (selectedId === candidate.id) setSelectedId(remaining[0]?.id ?? null); }}><X size={14} /></button>
           </div>)}</div>
-          <div className="queue-footer"><button className="button primary convert-button" disabled={busy || !pending.length} onClick={() => void score(pending)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ScanText size={16} />}{busy ? 'Scoring…' : 'Score CVs'}{!busy && <ArrowRight size={16} />}</button>{(busy || completed > 0) && <p>{busy ? 'Please keep this tab open' : `${completed} CV${completed === 1 ? '' : 's'} scored`}</p>}</div>
+          <div className="queue-footer"><button className="button primary convert-button" disabled={busy || reviewBusy || !pending.length} onClick={() => void score(pending)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ScanText size={16} />}{busy ? waitingReview?'Waiting for review…':`Scoring ${batchProgress.current}/${batchProgress.total}…` : 'Score CVs'}{!busy && <ArrowRight size={16} />}</button>{(busy || processed > 0) && <p>{busy ? waitingReview?'Finish reviewing this CV to continue automatically':'Please keep this tab open' : `${processed} CV${processed === 1 ? '' : 's'} processed${awaitingReview?` · ${awaitingReview} need review`:''}`}</p>}</div>
         </div>
         <div className="output-panel scoring-output" aria-busy={selected?.stage === 'scoring'}><div className="panel-heading"><h2>Candidate score</h2>{selected?.stage === 'complete' && <button className="button secondary download-button" onClick={downloadResult}><ArrowDownToLine size={14} />Download</button>}</div>
           {selected?.stage === 'complete' ? <div className="score-result"><div className="score-total" data-score-band={total <= 50 ? 'low' : total < 70 ? 'medium' : 'high'}><div><span className="score-label">TOTAL SCORE</span><div className="score-number"><strong>{total}</strong><span>/ 100</span></div><p>{position.name}</p><span className={`outcome ${total<=50?'rejected':total<70?'consider':'pass'}`}>{total<=50?'Rejected':total<70?'Consider':'Pass'}</span></div><div className="score-ring" style={{'--score':total} as CSSProperties}><span><Check size={25} strokeWidth={1.7} /></span></div></div><div className="dimension-heading"><h3>Score breakdown</h3><span>Score / Max</span></div><div className="dimension-list">{position.rubric.map((d,index) => { const points = selected.result?.dimensions.find(item => item.id === d.id)?.score ?? 0; return <div className="dimension-row" key={d.id}><span className="dimension-index">{String(index+1).padStart(2,'0')}</span><div className="dimension-name"><span>{d.title}</span><div className="dimension-track"><span style={{width:`${points/d.max*100}%`}} /></div></div><span className="dimension-points"><strong>{points}</strong><span>/ {d.max}</span></span></div>; })}</div></div>
           : selected?.stage === 'scoring' ? <div className="scoring-loading" role="status"><div className="loading-orbit"><ScanText size={27} strokeWidth={1.5} /><span /></div><h3>Scoring CV…</h3><p>Please wait while we review this CV.</p><div className="indeterminate-track"><span /></div></div>
-          : selected?.stage === 'review' ? <div className="output-empty"><div className="preview-illustration"><FileText size={28} /></div><h3>A quick review is needed</h3><p>Confirm {selected.result?.pending.length} new sentence{selected.result?.pending.length === 1 ? '' : 's'} to finish scoring.</p><button className="button primary" onClick={() => {setReviewError('');setReviewId(selected.id);}}>Review sentences</button></div>
-          : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to score this CV</h3><p>{selected.error}</p>{selected.file && <button className="button secondary" disabled={busy} onClick={() => patch(selected.id,{stage:'ready',error:undefined})}>Try again</button>}</div>
+          : selected?.stage === 'review' ? <div className="output-empty"><div className="preview-illustration"><FileText size={28} /></div><h3>A quick review is needed</h3><p>Confirm {selected.result?.pending.length} new sentence{selected.result?.pending.length === 1 ? '' : 's'} to finish scoring.</p><button className="button primary" disabled={reviewBusy} onClick={() => {setReviewError('');setReviewId(selected.id);}}>Review sentences</button></div>
+          : selected?.stage === 'error' ? <div className="output-empty"><div className="preview-illustration warning"><CircleAlert size={28} /></div><h3>Unable to score this CV</h3><p>{selected.error}</p>{selected.file && <button className="button secondary" disabled={busy||reviewBusy} onClick={() => void score([selected])}>Try again</button>}</div>
           : <div className="output-empty score-empty"><div className="score-preview-paper"><span /><span /><span /><span /></div><h3>{selected ? 'Ready when you are' : 'A clearer view of potential'}</h3><p>{selected ? 'Score this CV to see the total experience score and a breakdown for each part.' : 'Add candidate CVs to get started.'}</p></div>}
         </div>
       </section>
