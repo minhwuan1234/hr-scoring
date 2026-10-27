@@ -1,3 +1,4 @@
+import {createSharedWorkspace} from './shared-workspace.mjs';
 import {reviewerName} from './reviewers.mjs';
 import {candidateQuery,fileCandidatePage,postgresCandidatePage} from './candidate-pages.mjs';
 import {readPositionCatalog,persistPositionCatalog} from './position-store.mjs';
@@ -128,6 +129,7 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
       for(const {scope,ids} of ordered){await update(scope,state=>remove(state,ids));for(const id of ids){try{await unlink(resolve(directory,'cvs',scope,`${id}.pdf`));}catch(error){if(error.code!=='ENOENT')throw error;}}}
     }
   }
+  const sharedWorkspace=createSharedWorkspace({pool,directory,initialize});
   const cvFiles=createCvFiles({pool,directory,initialize,update});
-  return { update, initialize, positions, position, changePositions, readScoring, readJob, candidate, decideCandidate, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  return { update, initialize, sharedWorkspace, positions, position, changePositions, readScoring, readJob, candidate, decideCandidate, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

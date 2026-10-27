@@ -14,7 +14,7 @@ const deletedJobIds=new Set<string>();
 export const wasCandidateDeleted=(id:string)=>deletedJobIds.has(id);
 function announceDeletion(items:CandidateSelection[]){
  const ids=new Set(items.map(c=>c.id));for(const id of ids)deletedJobIds.add(id);
- try{for(let n=sessionStorage.length-1;n>=0;n--){const key=sessionStorage.key(n);if(key?.startsWith('hr-scoring-jobs-v2')){const rows=JSON.parse(sessionStorage.getItem(key)||'[]');sessionStorage.setItem(key,JSON.stringify(rows.filter((row:{result?:{id:string}})=>!ids.has(row.result?.id || ''))));}}}catch{/* Server deletion remains authoritative. */}
+ try{for(let n=sessionStorage.length-1;n>=0;n--){const key=sessionStorage.key(n);if(key?.startsWith('hr-scoring-jobs-v3-shared')){const rows=JSON.parse(sessionStorage.getItem(key)||'[]');sessionStorage.setItem(key,JSON.stringify(rows.filter((row:{result?:{id:string}})=>!ids.has(row.result?.id || ''))));}}}catch{/* Server deletion remains authoritative. */}
  window.dispatchEvent(new CustomEvent('candidates-deleted',{detail:items}));
 }
 interface CandidatePage {rows:CandidateRecord[];total:number;page:number;pages:number;pageSize:number;stats:Record<'all'|'pass'|'consider'|'rejected'|'review',number>;positions:{id:string;name:string;count:number}[]}

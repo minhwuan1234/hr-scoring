@@ -11,9 +11,9 @@ import './scoring.css';
 
 type Stage = 'ready' | 'scoring' | 'review' | 'complete' | 'error';
 interface Candidate { id: string; name: string; file?: File; stage: Stage; result?: ScoreResult; error?: string; cvUploadFailed?:boolean }
-const SESSION = 'hr-scoring-jobs-v2';
-function restore(key:string,position:PositionTemplate): Candidate[] {
-  try { return JSON.parse(sessionStorage.getItem(key) || (position.id==='hr-intern' && position.version===1 ? sessionStorage.getItem(SESSION) : null) || '[]').filter((item: Candidate) => typeof item.id === 'string' && typeof item.name === 'string' && item.result?.id).slice(0,50); }
+const SESSION = 'hr-scoring-jobs-v3-shared';
+function restore(key:string): Candidate[] {
+  try { return JSON.parse(sessionStorage.getItem(key) || '[]').filter((item: Candidate) => typeof item.id === 'string' && typeof item.name === 'string' && item.result?.id).slice(0,50); }
   catch { return []; }
 }
 function message(error: unknown) {
@@ -25,7 +25,7 @@ function message(error: unknown) {
 export default function ScoringWorkspace({history,position,active,onBusyChange}:{history:HistoryData;position:PositionTemplate;active:boolean;onBusyChange:(busy:boolean)=>void}) {
   const [view,setView]=useState<'screening'|'history'>('screening');
   const sessionKey=`${SESSION}:${positionKey(position)}`;
-  const restoreCurrent=()=>restore(sessionKey,position);
+  const restoreCurrent=()=>restore(sessionKey);
   const [candidates,setCandidates] = useState<Candidate[]>(restoreCurrent);
   const [selectedId,setSelectedId] = useState<string | null>(() => restoreCurrent()[0]?.id ?? null);
   const [busy,setBusy] = useState(false);

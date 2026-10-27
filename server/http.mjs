@@ -18,7 +18,7 @@ import { createReadStream } from 'node:fs';
 import { stat,readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createStore, workspaceId } from './store.mjs';
+import { createStore } from './store.mjs';
 import { MATCH_THRESHOLD } from './service.mjs';
 
 const dist = resolve(fileURLToPath(new URL('../dist',import.meta.url)));
@@ -79,9 +79,9 @@ const server = createServer(async (request,response) => {
       return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
     }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{sentencePolicy:SCORING_UNIT,maxEvidenceSentences:MAX_EVIDENCE_SENTENCES,performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',decisionVersion:'lark-reviewer-decisions-v3',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{sentencePolicy:SCORING_UNIT,maxEvidenceSentences:MAX_EVIDENCE_SENTENCES,performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',workspaceMode:'shared-team-v1',decisionVersion:'lark-reviewer-decisions-v3',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
-      const workspace = workspaceId(request.headers['x-workspace-token']);
+      const workspace = await store.sharedWorkspace();
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){
         const {scope}=await scorer(workspace,requestUrl.searchParams.get('positionId') || 'hr-intern',Number(requestUrl.searchParams.get('positionVersion') || 1));
         const {bytes,fileName}=await store.cvFiles.get(scope,path.split('/')[3]);
@@ -136,5 +136,6 @@ const server = createServer(async (request,response) => {
 });
 server.requestTimeout = 240000;
 await store.initialize();
+await store.sharedWorkspace();
 server.listen(Number(process.env.PORT || 3001),'0.0.0.0',()=>console.log('HR Scoring server ready.'));
 for (const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>server.close(async()=>{await store.close();process.exit(0);}));
