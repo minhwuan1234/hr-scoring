@@ -78,7 +78,7 @@ test('sending uses server-owned records and ignores client scores, identities an
  assert.deepEqual(sent.map(s=>s.receiver),LARK_RECIPIENTS);assert.match(JSON.stringify(sent[0].card),/Synthetic Candidate/);assert.doesNotMatch(JSON.stringify(sent[0].card),/invented/);
  assert.equal(new Set(sent.map(s=>s.uuid)).size,2);
  const rows=sent[0].card.elements.filter(e=>e.tag==='action');
- assert.deepEqual(rows[1].actions.map(a=>a.text.content),['Accept','Denied']);
+ assert.deepEqual(rows[1].actions.map(a=>a.text.content),['Accept','Reject']);
  for(const [index,action] of rows[1].actions.entries())assert.equal(decisions.verify(action.url.split('/').at(-1)).decision,index===0?'accept':'denied');
  const fileLink=rows[0].actions[0].url;assert.equal(links.verify(fileLink.split('/').at(-1)).id,candidate.id);assert.ok(!fileLink.includes('attacker.test'));
  let networkCalls=0;const unused={check:async()=>{networkCalls++;},sendCard:async()=>{networkCalls++;}};

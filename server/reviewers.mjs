@@ -7,4 +7,4 @@ export const LARK_REVIEWERS=Object.freeze({
  'ou_ba8c57cac81d5504103a9ba941d5b179':'Phương Anh',
 });
 export function reviewerName(id){return Object.hasOwn(LARK_REVIEWERS,id)?LARK_REVIEWERS[id]:undefined;}
-export function decisionCounts(candidate){const values=Object.values(candidate.reviewerDecisions||{});return {accept:values.filter(d=>d.decision==='accept').length,reject:values.filter(d=>d.decision==='denied').length};}
+export function decisionCounts(candidate){const values=Object.values(candidate.reviewerDecisions||{});return {accept:values.filter(d=>d.decision==='accept').length,reject:values.filter(d=>['denied','reject'].includes(d.decision)).length};}

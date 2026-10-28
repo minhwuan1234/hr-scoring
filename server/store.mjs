@@ -1,3 +1,4 @@
+import {rejectionInput,rejectionDecision,persistRejection} from './candidate-rejections.mjs';
 import {createSharedWorkspace} from './shared-workspace.mjs';
 import {reviewerName} from './reviewers.mjs';
 import {candidateQuery,fileCandidatePage,postgresCandidatePage} from './candidate-pages.mjs';
@@ -96,6 +97,19 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
     const name=reviewerName(receiver);if(!name)throw Object.assign(new Error('Unknown reviewer.'),{status:400});
     return update(scope,state=>{const c=state.candidates?.[id];if(!c||state.deletedCandidates?.[id])throw Object.assign(new Error('This CV is no longer available.'),{status:404});c.reviewerDecisions??={};if(c.reviewerDecisions[receiver]?.decision!==decision){const decidedAt=Math.max(Date.now(),(c.reviewerDecisions[receiver]?.decidedAt||0)+1);c.reviewerDecisions[receiver]={name,decision,decidedAt};c.updatedAt=decidedAt;}return structuredClone(c);});
   }
+  async function rejectCandidate(scope,id,options){
+    const input=rejectionInput(options);
+    if(pool){await initialize();return persistRejection(pool,scope,id,input);}
+    return update(scope,state=>{
+      const c=state.candidates?.[id];if(!c||state.deletedCandidates?.[id])throw Object.assign(new Error('This CV is no longer available.'),{status:404});
+      state.rejectionRequests??={};const key=`${id}:${input.request_id}`;
+      if(state.rejectionRequests[key])return {saved:true,decision:'reject',duplicate:true};
+      c.reviewerDecisions??={};const decision=rejectionDecision(input,c.reviewerDecisions[input.reviewer_id]);
+      c.reviewerDecisions[input.reviewer_id]=decision;c.updatedAt=decision.decidedAt;
+      state.rejectionRequests[key]=decision;
+      return {saved:true,decision:'reject',duplicate:false};
+    });
+  }
   async function candidatePage(owner,input,exportAll=false){const query=candidateQuery(input);if(!pool)return fileCandidatePage(await fileCandidates({update},owner),query,owner,exportAll);await initialize();return postgresCandidatePage(pool,owner,query,exportAll);}
   async function candidates(owner,selection){
     if(!pool){const rows=await fileCandidates({update},owner);if(!selection)return rows;const keys=new Set(selection.map(c=>JSON.stringify([c.positionId,c.positionVersion,c.id])));return rows.filter(c=>keys.has(JSON.stringify([c.positionId,c.positionVersion,c.id])));}
@@ -131,5 +145,5 @@ export function createStore({ databaseUrl = process.env.DATABASE_URL, directory 
   }
   const sharedWorkspace=createSharedWorkspace({pool,directory,initialize});
   const cvFiles=createCvFiles({pool,directory,initialize,update});
-  return { update, initialize, sharedWorkspace, positions, position, changePositions, readScoring, readJob, candidate, decideCandidate, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
+  return { update, initialize, sharedWorkspace, positions, position, changePositions, readScoring, readJob, candidate, decideCandidate, rejectCandidate, candidates, candidatePage, cvFiles, removeCandidates, backend:pool ? 'postgresql' : 'file', datasetVersion:DATASET_VERSION, schemaVersion:pool ? SCHEMA_VERSION : null, persistent: !!pool || !!process.env.SCORING_DATA_DIR, close: () => pool?.end() };
 }

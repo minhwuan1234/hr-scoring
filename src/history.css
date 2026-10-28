@@ -65,3 +65,6 @@
 @media(max-width:600px){.history-search{flex-basis:100%;max-width:360px;min-width:0;width:100%}}
 
 .history-month-selects{display:flex;align-items:center;gap:8px}.history-month-selects select:first-child{min-width:128px}.history-month-selects select:last-child{min-width:88px}
+
+.rejection-detail{display:grid;gap:4px;white-space:pre-wrap;overflow-wrap:anywhere}.rejection-detail time{font-size:12px;color:var(--muted,#777)}
+.history-table td>.outcome+.outcome{display:block;margin-top:4px}

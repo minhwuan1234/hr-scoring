@@ -1,3 +1,5 @@
+import {createLarkReviewAuth,readReviewCookie} from './lark-review-auth.mjs';
+import {rejectionRequestId} from './candidate-rejections.mjs';
 import {candidateCsv} from './candidate-csv.mjs';
 import {SCORING_UNIT,MAX_EVIDENCE_SENTENCES} from './sentences.mjs';
 import {previewLarkDelivery} from './lark-delivery-plan.mjs';
@@ -27,6 +29,7 @@ const {positions,scorer} = createPositionRouter(store);
 const lark=createLarkClient();
 const cvLinks=createCvLinks();
 const decisionLinks=createDecisionLinks();
+const reviewAuth=createLarkReviewAuth();
 const rateLimits = new Map();
 let active = 0;
 
@@ -65,9 +68,34 @@ const server = createServer(async (request,response) => {
       response.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
       return response.end(request.method==='HEAD'?undefined:await readFile(new URL('./decision-client.js',import.meta.url)));
     }
+    if(path==='/lark/review/callback'){
+      if(request.method!=='GET')return json(response,405,{error:'Method not allowed.'});
+      checkWriteRate(request);
+      const result=await reviewAuth.finish({code:requestUrl.searchParams.get('code'),state:requestUrl.searchParams.get('state'),cookie:readReviewCookie(request)});
+      const link=decisionLinks.verify(result.token);if(link.decision!=='denied')return json(response,400,{error:'Invalid rejection link.'});
+      response.writeHead(303,{Location:`/lark/decision/${result.token}`,'Set-Cookie':result.cookie,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});return response.end();
+    }
     if(path.startsWith('/lark/decision/')){
       if(!['GET','HEAD','POST'].includes(request.method))return json(response,405,{error:'Method not allowed.'});
-      const {scope,id,decision,receiver}=decisionLinks.verify(path.slice('/lark/decision/'.length));
+      const token=path.slice('/lark/decision/'.length);
+      const {scope,id,decision,receiver}=decisionLinks.verify(token);
+      if(decision==='denied'){
+        const candidate=await store.candidate(scope,id);if(!candidate)return json(response,404,{error:'Candidate not found.'});
+        if(request.method==='HEAD'){response.writeHead(200,decisionHeaders);return response.end();}
+        let reviewer;
+        try{reviewer=reviewAuth.reviewer(readReviewCookie(request),token);}catch(error){
+          if(request.method==='POST')throw error;
+          checkWriteRate(request);const login=reviewAuth.start(token);
+          response.writeHead(303,{Location:login.location,'Set-Cookie':login.cookie,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});return response.end();
+        }
+        if(request.method==='POST'){
+          checkWriteRate(request);if(!allowedWriteOrigin(request,{decision:true}))return json(response,403,{error:'Cross-origin requests are not allowed.'});
+          if(request.headers['x-decision-intent']!=='apply')return json(response,400,{error:'Confirm rejection before saving.'});
+          const payload=await body(request);if(payload?.confirm!==true)return json(response,400,{error:'Confirm rejection before saving.'});
+          return json(response,200,await store.rejectCandidate(scope,id,{reviewer,reason:payload.reject_reason,requestId:rejectionRequestId(token,reviewer.id)}));
+        }
+        response.writeHead(200,decisionHeaders);return response.end(decisionPage(candidate,'denied',false,reviewer));
+      }
       if(request.method==='POST'){
         checkWriteRate(request);
         if(!allowedWriteOrigin(request,{decision:true}))return json(response,403,{error:'Cross-origin requests are not allowed.'});
@@ -79,7 +107,7 @@ const server = createServer(async (request,response) => {
       return response.end(request.method==='HEAD'?undefined:decisionPage(candidate,decision,request.method==='POST'));
     }
     if (path === '/api/health') return json(response,200,{ok:true});
-    if (path === '/api/status') return json(response,200,{sentencePolicy:SCORING_UNIT,maxEvidenceSentences:MAX_EVIDENCE_SENTENCES,performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',workspaceMode:'shared-team-v1',decisionVersion:'lark-reviewer-decisions-v3',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
+    if (path === '/api/status') return json(response,200,{sentencePolicy:SCORING_UNIT,maxEvidenceSentences:MAX_EVIDENCE_SENTENCES,performanceVersion:'isolated-io-v1',errorHandlingVersion:'scoring-recovery-v1',paginationVersion:'candidate-pages-v1',workspaceMode:'shared-team-v1',decisionVersion:'lark-reject-confirm-v4',larkRoutingVersion:'role-recipients-v1',configured:!!process.env.OPEN_AI_API_KEY,persistent:store.persistent,storage:store.backend,datasetVersion:store.datasetVersion,schemaVersion:store.schemaVersion,model:LUNA_MODEL,scoringFormula:SCORING_FORMULA,matchThreshold:MATCH_THRESHOLD});
     if (path.startsWith('/api/')) {
       const workspace = await store.sharedWorkspace();
       if(request.method==='GET' && /^\/api\/jobs\/[\w-]+\/cv$/.test(path)){

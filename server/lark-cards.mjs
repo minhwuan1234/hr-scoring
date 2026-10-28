@@ -26,7 +26,7 @@ export function candidateCard(candidate,cvUrl,decisionUrls){
   ]},
   ...(decisionUrls?[{tag:'action',actions:[
    {tag:'button',type:'primary',text:text('Accept'),url:decisionUrls.accept},
-   {tag:'button',type:'danger',text:text('Denied'),url:decisionUrls.denied},
+   {tag:'button',type:'danger',text:text('Reject'),url:decisionUrls.denied},
   ]}]:[]),
  ]};
 }
