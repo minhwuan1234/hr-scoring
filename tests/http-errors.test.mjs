@@ -69,7 +69,7 @@ test('Lark links automatically submit only the signed decision and handle Safari
   const base=`http://127.0.0.1:${port}`;
   const previewPayload={candidates:[{id,positionId:'hr-intern',positionVersion:1,positionName:'Social Content Creator'}],receivers:['invented']};
   assert.equal((await fetch(base+'/api/lark/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(previewPayload)})).status,200);
-  const preview=await fetch(base+'/api/lark/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-Token':'e'.repeat(64)},body:JSON.stringify(previewPayload)});assert.equal(preview.status,200);assert.deepEqual(await preview.json(),{recipientCount:1,totalCount:1});
+  const preview=await fetch(base+'/api/lark/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-Token':'e'.repeat(64)},body:JSON.stringify(previewPayload)});assert.equal(preview.status,200);assert.deepEqual(await preview.json(),{recipientCount:2,totalCount:2});
   const nullPreview=await fetch(base+'/api/lark/preview',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-Token':'e'.repeat(64)},body:'null'});assert.equal(nullPreview.status,400);
   const get=await fetch(base+path);assert.equal(get.status,200);const html=await get.text();assert.match(html,/Saving decision/);assert.match(html,/decision-client.js/);assert.doesNotMatch(html,/Confirm candidate|<form/);assert.equal(get.headers.get('referrer-policy'),'no-referrer');assert.equal(get.headers.get('cache-control'),'no-store');
   assert.equal((await fetch(base+path,{method:'HEAD'})).status,200);assert.equal((await store.candidate(owner,id)).reviewerDecisions,undefined);
