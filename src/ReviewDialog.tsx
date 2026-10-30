@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, X } from 'lucide-react';
-import type {PositionTemplate} from './positions';
+import type {Criterion} from './positions';
 import type { EvidenceReview, ReviewDecision } from './scoring-api';
 
 type ReviewAction = ReviewDecision['action'] | null;
 type Draft = Omit<ReviewDecision, 'action'> & {action: ReviewAction};
 
 export default function ReviewDialog({ position, evidence, busy, error, onDecisions, onClose }: {
-  position: PositionTemplate; evidence: EvidenceReview[]; busy: boolean; error: string;
+  position: {rubric: Pick<Criterion,'id'|'title'|'max'|'bands'>[]}; evidence: EvidenceReview[]; busy: boolean; error: string;
   onDecisions: (decisions: ReviewDecision[]) => void; onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);

@@ -1,6 +1,6 @@
 import {CandidateHistory,notifyCandidatesChanged,wasCandidateDeleted,type HistoryData} from './CandidateHistory';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ArrowDownToLine, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, Plus, ScanText, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, Check, CircleAlert, FileText, LoaderCircle, Plus, ScanText, X } from 'lucide-react';
 import { pdfError } from './pdf';
 import { readCv } from './cv-input';
 import {positionKey,type PositionTemplate} from './positions';
@@ -60,6 +60,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
   }, [candidates]);
 
   useEffect(()=>{const deleted=(event:Event)=>{const items=(event as CustomEvent<{id:string;positionId:string;positionVersion:number}[]>).detail.filter(c=>c.positionId===position.id&&c.positionVersion===position.version);if(!items.length)return;const ids=new Set(items.map(c=>c.id));setCandidates(current=>current.filter(c=>!c.result||!ids.has(c.result.id)));setReviewId(null);if(reviewWait.current&&candidates.find(c=>c.id===reviewWait.current!.id&&c.result&&ids.has(c.result.id))){reviewWait.current.resolve();reviewWait.current=null;}};window.addEventListener('candidates-deleted',deleted);return()=>window.removeEventListener('candidates-deleted',deleted);},[position.id,position.version,candidates]);
+  useEffect(()=>{const saved=(event:Event)=>{const {id,positionId,positionVersion,result}=(event as CustomEvent<{id:string;positionId:string;positionVersion:number;result:ScoreResult}>).detail;if(positionId!==position.id||positionVersion!==position.version)return;const local=candidates.find(c=>c.result?.id===id);if(!local)return;patch(local.id,{result,stage:result.state});if(result.state==='complete'){setReviewId(current=>current===local.id?null:current);if(reviewWait.current?.id===local.id){reviewWait.current.resolve();reviewWait.current=null;}}};window.addEventListener('candidate-review-saved',saved);return()=>window.removeEventListener('candidate-review-saved',saved);},[candidates,position.id,position.version]);
   useEffect(()=>{if(selectedId&&!candidates.some(c=>c.id===selectedId))setSelectedId(candidates[0]?.id || null);},[candidates,selectedId]);
   useEffect(()=>{if(active)onBusyChange(busy||reviewBusy);},[active,busy,reviewBusy,onBusyChange]);
 
@@ -134,7 +135,6 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
   const total = selected?.result?.total ?? 0;
 
   return <>
-    <header className="topbar"><div className="breadcrumb"><FolderOpen size={15} /><span>Workspace</span><ChevronRight size={13} /><strong>{position.name}</strong></div></header>
     <div className="content scoring-content">
       <div className="page-heading"><div><h1>{position.name}<span className="title-dot">.</span></h1>{position.description&&<p>{position.description}</p>}</div></div>
       <div className="workspace-tabs" role="tablist" aria-label="Position views"><button role="tab" aria-selected={view==='screening'} disabled={busy||reviewBusy} onClick={()=>setView('screening')}>Screening</button><button role="tab" aria-selected={view==='history'} disabled={busy||reviewBusy} onClick={()=>setView('history')}>History <span className="count-badge">{history.positionCounts[position.id] || 0}</span></button></div>
