@@ -41,7 +41,7 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
   const mounted = useRef(true);
   const selected = candidates.find(item => item.id === selectedId);
   const reviewing = candidates.find(item => item.id === reviewId);
-  const evidence = reviewing?.result?.pending[0];
+  const evidence = reviewing?.result?.pending ?? [];
   const pending = candidates.filter(item => item.stage === 'ready' && item.file);
   const processed = candidates.filter(item => item.result).length;
   const awaitingReview=candidates.filter(item=>item.stage==='review').length;
@@ -105,11 +105,11 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
     } finally { running.current = false; if (mounted.current) {setBusy(false);setWaitingReview(false);} }
   }
 
-  async function decide(decision: ReviewDecision) {
+  async function decide(decisions: ReviewDecision[]) {
     if (!reviewing?.result || reviewBusy) return;
     setReviewBusy(true); setReviewError('');
     try {
-      const result = await scoringRequest<ScoreResult>(`/api/jobs/${reviewing.result.id}/review`,{decisions:[decision],positionId:position.id,positionVersion:position.version});
+      const result = await scoringRequest<ScoreResult>(`/api/jobs/${reviewing.result.id}/review`,{decisions,positionId:position.id,positionVersion:position.version});
       if(wasCandidateDeleted(result.id)){setCandidates(current=>current.filter(c=>c.id!==reviewing.id));setReviewId(null);reviewWait.current?.resolve();reviewWait.current=null;return;}
       patch(reviewing.id,{result,stage:result.state});
       notifyCandidatesChanged();
@@ -160,6 +160,6 @@ export default function ScoringWorkspace({history,position,active,onBusyChange}:
       </div>
       {view==='history'&&active&&<CandidateHistory data={history} positionId={position.id}/>}
     </div>
-    {evidence && <ReviewDialog key={evidence.id} position={position} evidence={evidence} remaining={reviewing!.result!.pending.length} busy={reviewBusy} error={reviewError} onDecision={decision => void decide(decision)} onClose={() => {setReviewId(null);setReviewError('');}} />}
+    {reviewing&&evidence.length>0&&<ReviewDialog key={reviewing.result!.id} position={position} evidence={evidence} busy={reviewBusy} error={reviewError} onDecisions={decisions => void decide(decisions)} onClose={() => {setReviewId(null);setReviewError('');}} />}
   </>;
 }

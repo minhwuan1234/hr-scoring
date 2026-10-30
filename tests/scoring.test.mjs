@@ -266,3 +266,20 @@ test('a CV with ten selected whole sentences can ask at most ten human review qu
   assert.equal(Object.keys((await store.readScoring('owner')).jobs).length,1);
  }finally{await store.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test('one review submits all sentence decisions for a candidate together',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'review-list-')),store=createStore({databaseUrl:null,directory});
+ const text='Learned Excel and built a tracker. Scheduled interviews for two candidates.';
+ const provider={
+  extractEvidence:async()=>({evidence:cvSentences(text).map((s,index)=>({sentenceId:s.sentenceId,statement:index?'Coordinated interviews.':'Applied learning.',reason:'Relevant work.',dimension:index?'hiring':'learning-drive',band:1}))}),
+  embed:async values=>values.map(value=>['Applied learning.','Coordinated interviews.'].includes(value)?[1,0]:[0,1]),
+  assessCeilings:fullAssessment,
+ };
+ try{
+  const service=createScoringService(store,provider,'review-list-model'),job=await service.analyze('owner',text);
+  assert.equal(job.pending.length,2);
+  const result=await service.review('owner',job.id,[{...job.pending[0],action:'approve',band:1,cap:18},{id:job.pending[1].id,action:'reject'}]);
+  assert.equal(result.state,'complete');assert.equal(result.pending.length,0);assert.equal(result.total,18);
+  assert.equal((await service.get('owner',job.id)).state,'complete');
+ }finally{await store.close();await rm(directory,{recursive:true,force:true});}
+});
